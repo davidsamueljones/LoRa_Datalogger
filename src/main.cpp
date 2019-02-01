@@ -2,8 +2,6 @@
   Top level container for including correct target main.
   @author David Jones (dsj1n15)
 */
-#include <Arduino.h>
-
 #if defined(DL_MASTER) && defined(DL_SLAVE)
 #error Cannot compile as both DL_MASTER and DL_SLAVE
 #endif
