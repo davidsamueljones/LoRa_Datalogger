@@ -13,6 +13,10 @@
 #define BO_LED_2 (2)
 #define BO_LED_3 (3)
 
+// Teensy LED (Can't really use for anything other than SPI
+// usage identifier due to default SCK0 line, oops...)
+#define BO_LED_0_SCK (13) 
+
 // Software switch pin definitions
 #define BO_SWITCH_PIN1  (5)
 #define BO_SWITCH_PIN2  (6)
