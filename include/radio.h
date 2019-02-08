@@ -9,14 +9,12 @@
 #include <RH_RF95.h>
 //#include "breakout.h"
 
-#define BOARD_ID_LEN 10
 #define TESTDEF_ID_LEN 10
 
 /*
   TODO
 */
 typedef struct lora_module_t {
-	//char radio_id[BOARD_ID_LEN] = "UNDEFINED";
 	uint8_t pin_cs;
 	uint8_t pin_rst;
 	uint8_t pin_int;
@@ -57,10 +55,10 @@ typedef enum radio_msg_type_t {
 
 /*
   TODO
+	N.B: Use RadioHead datagram packet for device ID
 */
 typedef struct radio_msg_t {
 	radio_msg_type_t type;
-	char radio_id[BOARD_ID_LEN];
 } radio_msg_t;
 
 // Hardcoded positions to place data in a message
