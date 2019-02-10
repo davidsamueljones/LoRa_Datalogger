@@ -3,7 +3,7 @@
 #include <Arduino.h>
 #include <TimeLib.h>
 
-#include "dl_master.h"
+#include "dl_common.h"
 #include "breakout.h"
 #include "radio.h"
 

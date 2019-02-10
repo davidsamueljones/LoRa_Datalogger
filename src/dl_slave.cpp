@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 
-#include "dl_slave.h"
+#include "dl_common.h"
 #include "breakout.h"
 #include "radio.h"
 
