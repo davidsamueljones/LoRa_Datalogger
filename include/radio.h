@@ -44,6 +44,8 @@ typedef struct lora_testdef_t {
   uint16_t packet_cnt;
   uint8_t packet_len;
   lora_cfg_t cfg;
+  uint8_t master_id;
+  uint8_t slave_id;
 } lora_testdef_t;
 
 /*
@@ -80,6 +82,9 @@ typedef struct radio_msg_t {
 
 #define LEN_MSG_TESTDEF LEN_MSG_WITH_PAYLOAD(sizeof(lora_testdef_t))
 
+#define MIN_TESTDEF_PACKET_LEN (RH_RF95_HEADER_LEN + LEN_MSG_EMPTY)
+#define MAX_TESTDEF_PACKET_LEN (RH_MAX_MESSAGE_LEN)
+
 /*
   Helper structure for handling a message queue. Holds a buffer long
   enough for the longest possible message, with a pointer mapping to
@@ -109,12 +114,10 @@ class LoRaModule {
     bool acknowledged_rx(uint16_t timeout=0);
     bool unacknowledged_rx(uint16_t timeout=0);
 
-    void send_testdef(lora_testdef_t *tx_testdef);
-    
-    void recv_testdef(lora_testdef_t *recv_testdef);
-    void send_test_packet();
-    void recv_test_packet();
-    void calc_exp_airtime();
+    bool send_testdef(lora_testdef_t *tx_testdef);
+    bool recv_testdef(lora_testdef_t *recv_testdef);
+
+    bool send_testdef_packets(lora_testdef_t *testdef);
 
     // Debug functions
     void dbg_print_cur_cfg(void);

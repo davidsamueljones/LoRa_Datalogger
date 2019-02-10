@@ -1,5 +1,4 @@
 #include <Arduino.h>
-
 #include "radio.h"
 #include "breakout.h"
 
@@ -159,7 +158,10 @@ bool LoRaModule::unacknowledged_rx(uint16_t timeout) {
 }
 
 
-void LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
+bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
+    // Reset to agreed base 
+    g_radio_a->reset_to_base_cfg();
+
     // Send QRY? and wait for someone to say RDY!
     bool got_rdy = false;
     while(!got_rdy) {
@@ -169,7 +171,7 @@ void LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
       _tx_buf.p_hdr->type = msg_test_qry;
       bool sent = unacknowledged_tx();
       if (check_interrupt(false))
-        return;
+        return false;
       if (!sent) {
         delay(500);
         continue;
@@ -178,37 +180,36 @@ void LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
       _rx_buf.len = LEN_MSG_EMPTY;
       got_rdy = acknowledged_rx(3000);
       if (!got_rdy || check_interrupt(false))
-        return;
+        return false;
       // Verify received message is a RDY!
       got_rdy = (_rx_buf.p_hdr->type == msg_test_rdy);
       got_rdy &= _rx_buf.from != RH_BROADCAST_ADDRESS;
       got_rdy &= _rx_buf.to == _rf95_dg.thisAddress();
       Serial.printf("Received message is%s a RDY!\n", got_rdy ? "" : " not");
     }
-    // Keep a copy of who we are talking to in case rx buf gets trashed
-    uint8_t slave_id = _rx_buf.from;
-
-    // TODO: Sort LEDs to be helpful
-    breakout_set_led(BO_LED_1, true);
-    breakout_set_led(BO_LED_2, true);
-    breakout_set_led(BO_LED_3, true);
+    // Track the members of the exchange
+    tx_testdef->master_id = _rf95_dg.thisAddress();
+    tx_testdef->slave_id = _rx_buf.from;
 
     // Send Test Definition
     Serial.printf("Sending test definition to slave...\n");
-    _tx_buf.to = slave_id;
+    _tx_buf.to = tx_testdef->slave_id;
     _tx_buf.len = LEN_MSG_TESTDEF;
     _tx_buf.p_hdr->type = msg_test_testdef;
     memcpy(&_tx_buf.data[MSG_PAYLOAD_START], tx_testdef, sizeof(lora_testdef_t));
     dbg_print_testdef((lora_testdef_t*) &_tx_buf.data[MSG_PAYLOAD_START]);
     bool acked_testdef = acknowledged_tx(3);
     if (!acked_testdef || check_interrupt(false))
-      return;
-    Serial.printf("Got acknowledgment to testdef!\n");
+      return false;  
+    Serial.printf("Testdef delivered successfully!\n");
+
+    return true;
 }
 
-void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
-  uint8_t master_id = 0x80;
-
+bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
+  // Reset to agreed base 
+  g_radio_a->reset_to_base_cfg();
+  
   // Wait for QRY?
   Serial.printf("Waiting for QRY? from a master...\n");
   bool got_qry = false;
@@ -216,7 +217,7 @@ void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
     _rx_buf.len = LEN_MSG_EMPTY;
     got_qry = unacknowledged_rx();
     if (!got_qry || check_interrupt(false))
-      return;
+      return false;
 
     // Verify received message is a query
     got_qry &= (_rx_buf.p_hdr->type == msg_test_qry);
@@ -225,7 +226,7 @@ void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
     Serial.printf("Received message is%s a QRY?\n", got_qry ? "" : " not");
   }
   // Keep a copy of who we are talking to in case rx buf gets trashed
-  master_id = _rx_buf.from;
+  uint8_t master_id = _rx_buf.from;
 
   // Respond to queryer with a RDY!
   _tx_buf.to = master_id;
@@ -234,17 +235,18 @@ void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   Serial.printf("Responding with RDY! to master...\n");
   bool acked_rdy = acknowledged_tx(3);
   if (!acked_rdy || check_interrupt(false))
-    return;
+    return false;
   Serial.printf("Got acknowledgment to RDY!\n");
 
   // Receive Test Definition
   bool got_testdef = false;
+  Serial.printf("Waiting for test definition from master...\n");
   while (!got_testdef) {
-    // Give up if we haven't received any message every 3000ms
+    // Give up if we haven't received any message within a timeout of the last
     _rx_buf.len = LEN_MSG_TESTDEF;
     got_testdef = acknowledged_rx(3000);
     if (!got_testdef || check_interrupt(false))
-      return;
+      return false;
     // Verify received message is a test definition
     got_testdef &= (_rx_buf.p_hdr->type == msg_test_testdef);
     got_testdef &= _rx_buf.from == master_id;
@@ -252,7 +254,54 @@ void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   }
   // Copy out testdef to receive buffer
   memcpy(rx_testdef, &_rx_buf.data[MSG_PAYLOAD_START], sizeof(lora_testdef_t));
+  Serial.printf("Testdef received successfully!\n");
   dbg_print_testdef((lora_testdef_t*) &_rx_buf.data[MSG_PAYLOAD_START]);
+  return true;
+}
+
+bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
+  // Verify anything that could start trashing memory
+  if (testdef->packet_len < MIN_TESTDEF_PACKET_LEN || testdef->packet_len > MAX_TESTDEF_PACKET_LEN) {
+    Serial.printf("Packet length to send must be between %d and %d but was %d!\n",
+        MIN_TESTDEF_PACKET_LEN, MAX_TESTDEF_PACKET_LEN, testdef->packet_len);
+    return false;
+  }
+  
+  // Use the mutually agreed configuration
+  set_cfg(&testdef->cfg);
+
+  // Configure message
+  _tx_buf.to = testdef->slave_id;
+  _tx_buf.p_hdr->type = msg_test_packet;
+  _tx_buf.len = testdef->packet_len - RH_RF95_HEADER_LEN;
+  uint8_t payload_len = _tx_buf.len - LEN_MSG_EMPTY;
+  // Repeating pattern every 4 bytes for irrelevent data
+  for (uint8_t i=0; i < (payload_len / 4) + 1; i++) {
+    _tx_buf.data[i*4+0] = 0xF0; 
+    _tx_buf.data[i*4+1] = 0x0F;
+    _tx_buf.data[i*4+2] = 0xAA;
+    _tx_buf.data[i*4+3] = 0x55;
+  }
+  Serial.printf("Sending %d packets of length %d...\n", 
+    testdef->packet_cnt, testdef->packet_len);
+  
+  // Fire and forget the number of packets requested
+  uint16_t packet = 0;
+  uint32_t start_time = millis();
+  while (packet < testdef->packet_cnt) {
+    if (check_interrupt(false))
+      return false;
+    Serial.printf("Sending Packet %d...\n", packet);
+    // If any fail to send we'll just ignore it, this shouldn't happen
+    unacknowledged_tx();
+    packet++;
+  }
+  uint32_t end_time = millis();
+  // Calculate the sending duration, account for a single wrap
+  uint32_t duration = start_time < end_time ? 
+        end_time - start_time : start_time - end_time;
+  Serial.printf("Took %dms to send all packets!\n", duration);
+  return true;
 }
 
 // // Update to current test definition
@@ -279,25 +328,7 @@ void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
 // breakout_set_led(BO_LED_1, false);
 // breakout_set_led(BO_LED_2, true);
 
-//     // Send packets
-//     set_cfg(&rx_testdef->cfg);
-    
-//     delay(100);
-//     uint8_t cnt = 0;
-//     while (cnt < rx_testdef->packet_cnt) {
-//         Serial.printf("Sending packet!\n");
-//         // Send ACK! (No Payload)
-//         tx_msg_len = LEN_MSG_EMPTY;
-//         tx_header->type = msg_test_packet;
-//         _rf95.send(tx_buf, tx_msg_len);
-//         _rf95.waitPacketSent();
-//         cnt++;
-//         breakout_set_led(BO_LED_1, true);
-//         delay(200);
-//         breakout_set_led(BO_LED_1, false);
-//     }
-//     Serial.printf("Finished sending packets!\n");
-// }
+
 
 void LoRaModule::set_interrupt(bool value) {
   _interrupt = value;
