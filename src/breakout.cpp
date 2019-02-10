@@ -3,7 +3,11 @@
   @author David Jones (dsj1n15)
 */
 #include <Arduino.h>
+#include <TimeLib.h>
+
 #include "breakout.h"
+
+static time_t getTeensy3Time();
 
 void breakout_init(void) {
   // Initialise LEDs
@@ -15,7 +19,9 @@ void breakout_init(void) {
   breakout_set_led(BO_LED_3, false);
   // Initialise software switch
   pinMode(BO_SWITCH_PIN1, INPUT_PULLUP); 
-  pinMode(BO_SWITCH_PIN2, INPUT_PULLUP);   
+  pinMode(BO_SWITCH_PIN2, INPUT_PULLUP);
+  // Set the Time library to use Teensy RTC
+  setSyncProvider(getTeensy3Time);
 }
 
 void breakout_set_led(uint8_t led, bool enable) {
@@ -34,4 +40,8 @@ sw_state_t breakout_get_switch_state(void) {
   }
   // This should never be called
   return sw_state_unknown;
+}
+
+static time_t getTeensy3Time() {
+  return Teensy3Clock.get();
 }
