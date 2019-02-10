@@ -76,7 +76,9 @@ typedef struct radio_msg_t {
 #define MSG_PAYLOAD_START (sizeof(radio_msg_t))
 
 #define LEN_MSG_EMPTY (sizeof(radio_msg_t))
-#define LEN_MSG_WITH_PAYLOAD(PAYLOAD_LENGTH) (EMPTY_MSG_LENGTH + PAYLOAD_LENGTH)
+#define LEN_MSG_WITH_PAYLOAD(PAYLOAD_LENGTH) (LEN_MSG_EMPTY + PAYLOAD_LENGTH)
+
+#define LEN_MSG_TESTDEF LEN_MSG_WITH_PAYLOAD(sizeof(lora_testdef_t))
 
 /*
   Helper structure for handling a message queue. Holds a buffer long
