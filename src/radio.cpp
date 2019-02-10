@@ -3,240 +3,392 @@
 #include "radio.h"
 #include "breakout.h"
 
+#define SINGLE_RX_CHECK_TIMEOUT (500)
+
 lora_cfg_t hc_base_cfg = {
-    .freq = 868.0f,
-    .sf = 13,
-    .tx_dbm = 14,
-    .bw = 125000,
-    .cr4_denom = 5,
-    .crc = true,
+  .freq = 868.0f,
+  .sf = 13,
+  .tx_dbm = 14,
+  .bw = 125000,
+  .cr4_denom = 5,
+  .crc = true,
 };
 
 LoRaModule* g_radio_a = NULL;
 LoRaModule* g_radio_b = NULL;
-LoRaModule* g_radio_c = NULL;
 
 LoRaModule::LoRaModule(lora_module_t *module_cfg, lora_cfg_t *base_cfg) : 
-    _rf95(module_cfg->pin_cs, module_cfg->pin_int), 
-    _module_cfg(*module_cfg), 
-    _base_cfg(*base_cfg)
-    {}
+  _rf95(module_cfg->pin_cs, module_cfg->pin_int), 
+  _rf95_dg(_rf95, module_cfg->radio_id),
+  _module_cfg(*module_cfg), 
+  _base_cfg(*base_cfg),
+  _interrupt(false)
+  {}
 
-// TODO: Can we remove delays?
+
 bool LoRaModule::radio_init(void) {
-    // Configure reset pin
-    pinMode(RFM95_RST, OUTPUT);
-    digitalWrite(RFM95_RST, HIGH);
-    delay(10);
-    // Manually trigger reset
-    digitalWrite(RFM95_RST, LOW);
-    delay(10);
-    digitalWrite(RFM95_RST, HIGH);
-    delay(10);
-    // Check for driver init success
-    bool success = _rf95.init();
-    Serial.printf("Radio initialisation %s!\n", success ? "successful" : "failed");
-
-    return success;
+  // Configure reset pin
+  pinMode(RFM95_RST, OUTPUT);
+  digitalWrite(RFM95_RST, HIGH);
+  delay(10);
+  // Manually trigger reset
+  digitalWrite(RFM95_RST, LOW);
+  delay(10);
+  digitalWrite(RFM95_RST, HIGH);
+  delay(10);
+  // Initialise a reliable datagram driver, this will initialise the raw driver
+  Serial.printf("Initialising radio driver...\n"); 
+  bool success = _rf95_dg.init();
+  // We need an unreasonably long timeout to detect ACKs, not sure why (TODO)
+  _rf95_dg.setTimeout(1000); 
+  // Initialise any buffer values
+  _tx_buf.from = _rf95_dg.thisAddress();
+  return success;
 }
 
 void LoRaModule::reset_to_base_cfg(void) {
-    set_cfg(&_base_cfg);
+  set_cfg(&_base_cfg);
 }
 
 void LoRaModule::set_cfg(lora_cfg_t *new_cfg) {
-    Serial.printf("Setting new configuration...\n");
-    _rf95.setFrequency(new_cfg->freq);
-    _rf95.setSpreadingFactor(new_cfg->sf);
-    _rf95.setTxPower(new_cfg->tx_dbm);
-    _rf95.setSignalBandwidth(new_cfg->bw);
-    _rf95.setCodingRate4(new_cfg->cr4_denom);
-    _rf95.setPayloadCRC(new_cfg->crc);
-    _cur_cfg = *new_cfg;
-    Serial.printf("Configuration set!\n");
+  Serial.printf("Setting new configuration...\n");
+  _rf95.setFrequency(new_cfg->freq);
+  _rf95.setSpreadingFactor(new_cfg->sf);
+  _rf95.setTxPower(new_cfg->tx_dbm);
+  _rf95.setSignalBandwidth(new_cfg->bw);
+  _rf95.setCodingRate4(new_cfg->cr4_denom);
+  _rf95.setPayloadCRC(new_cfg->crc);
+  _cur_cfg = *new_cfg;
+  Serial.printf("Configuration set!\n");
 }
 
+bool LoRaModule::acknowledged_tx(uint8_t attempts) {
+  bool sent = false;
+  uint8_t attempt = 0;
+  Serial.printf("Sending acknowledged %d bytes...\n", _tx_buf.len);
+  // Disable retrying so we can escape in case of interrupt
+  _rf95_dg.setRetries(1);
+  // Handle multiple attempt behaviour, lots of retry behaviour not mirrored 
+  // from RadioHead but good enough
+  do {
+    attempt++;
+    Serial.printf("* Attempt: %d\n", attempt);
+    if (check_interrupt(false)) {
+      Serial.printf("Interrupted waiting for acknowledged TX!\n", _tx_buf.len);
+      break;
+    }
+    sent = _rf95_dg.sendtoWait(_tx_buf.data, _tx_buf.len, _tx_buf.to);
+  } while (!sent && (attempts == 0 || attempt < attempts));
+  
+  Serial.printf("TX %s!\n", sent ? "successful" : "failed");
+  return sent;
+}
+
+bool LoRaModule::unacknowledged_tx(void) {
+  Serial.printf("Sending unacknowledged %d bytes...\n", _tx_buf.len);
+  bool queued = _rf95_dg.sendto(_tx_buf.data, _tx_buf.len, _tx_buf.to);
+  if (!queued) {
+    Serial.printf("TX queued unsucessfully!");
+    return false;
+  }
+  // Wait until it has actually been sent
+  bool sent = _rf95_dg.waitPacketSent();
+  Serial.printf("TX %s!\n", sent ? "successful" : "failed");
+  return sent;
+}
+
+bool LoRaModule::acknowledged_rx(uint16_t timeout) {
+  uint8_t exp_rx_len = _rx_buf.len;
+  bool received = false;
+  uint16_t time = 0;
+  Serial.printf("Waiting for acknowledged RX...\n");
+  while (!received && (timeout == 0 || time < timeout)) {
+      _rx_buf.len = exp_rx_len;
+      // Copy full message if length not pre-configured correctly
+      if (_rx_buf.len == 0 || _rx_buf.len > RH_RF95_MAX_MESSAGE_LEN) {
+        _rx_buf.len = RH_RF95_MAX_MESSAGE_LEN;
+      }
+      // Wait for a message, receive it, and acknowledge it
+      received = _rf95_dg.recvfromAckTimeout(_rx_buf.data, &_rx_buf.len, 
+                                      SINGLE_RX_CHECK_TIMEOUT, &_rx_buf.from, &_rx_buf.to);
+      time += SINGLE_RX_CHECK_TIMEOUT;
+      if (check_interrupt(false)) {
+        Serial.printf("Interrupted waiting for RX!\n");
+        break;
+      }
+  }
+  if (timeout != 0 && time >= timeout) {
+    Serial.printf("Timed out waiting for RX!\n");
+  }
+  Serial.printf("Acknowledged RX %s!\n", received ? "successful" : "failed");
+  return received;
+}
+
+bool LoRaModule::unacknowledged_rx(uint16_t timeout) {
+  uint8_t exp_rx_len = _rx_buf.len;
+  bool received = false;
+  uint16_t time = 0;
+  Serial.printf("Waiting for unacknowledged RX...\n");
+  while (!received && (timeout == 0 || time < timeout)) {
+    // Wait for a message
+    bool available = _rf95.waitAvailableTimeout(SINGLE_RX_CHECK_TIMEOUT);
+    time += SINGLE_RX_CHECK_TIMEOUT;
+    // Process message if one has arrived
+    if (available) {
+      // Copy full message if length not pre-configured correctly
+      _rx_buf.len = exp_rx_len;
+      if (_rx_buf.len == 0 || _rx_buf.len > RH_RF95_MAX_MESSAGE_LEN) {
+        _rx_buf.len = RH_RF95_MAX_MESSAGE_LEN;
+      }
+      received = _rf95_dg.recvfrom(_rx_buf.data, &_rx_buf.len, 
+                                      &_rx_buf.from, &_rx_buf.to);
+      // Count as failed receive if not meant for us
+      received &=  ((_rx_buf.to == RH_BROADCAST_ADDRESS) ||
+                    (_rx_buf.to == _rf95_dg.thisAddress()));
+    }
+    if (check_interrupt(false)) {
+      Serial.printf("Interrupted waiting for RX!\n");
+      break;
+    }
+  }
+  if (timeout != 0 && time >= timeout) {
+    Serial.printf("Timed out waiting for RX!\n");
+  }
+  Serial.printf("Unacknowledged RX %s!\n", received ? "successful" : "failed");
+  return received;
+}
+
+
 void LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
-
-    // Setup TX Buffer
-    uint8_t tx_msg_len = 0;
-    uint8_t tx_buf[RH_RF95_MAX_MESSAGE_LEN];
-    radio_msg_t* tx_header = (radio_msg_t*) &tx_buf[MSG_HEADER_START];
-    
-    //strcpy(tx_header->radio_id, _module_cfg.radio_id);
-    
-    // Setup RX Buffer
-    uint8_t rx_msg_len = 0;
-    uint8_t rx_buf[RH_RF95_MAX_MESSAGE_LEN];
-    radio_msg_t* rx_header = (radio_msg_t*) &rx_buf[MSG_HEADER_START];
-
-    // Send RDY? (No Payload) 
-    tx_msg_len = sizeof(radio_msg_t);
-    tx_header->type = msg_test_rdy;
-    Serial.printf("Sending %d bytes!\n", tx_msg_len);
-    bool sent = _rf95.send(tx_buf, tx_msg_len);
-    _rf95.waitPacketSent();
-    Serial.printf("TX RDY? : [%s]\n", sent ? "Successful" : "Failed"); 
-
-    // Receive ACK! (No Payload Expected)
-    bool got_ack = false;
-    while (!_rf95.available()) {};
-    rx_msg_len = sizeof(rx_buf);
-    _rf95.recv(rx_buf, &rx_msg_len);
-    Serial.printf("Received %d bytes!\n", rx_msg_len);
-    Serial.printf("Expected %d bytes!\n", sizeof(radio_msg_t));  
-    if (rx_msg_len >= sizeof(radio_msg_t)) {
-        if (rx_header->type == msg_test_ack) {
-            got_ack = true;
-        }
-    }
-    Serial.printf("RX ACK! : [%s]\n", got_ack ? "Successful" : "Failed"); 
-    
-    if (got_ack == false) {
+    // Send QRY? and wait for someone to say RDY!
+    bool got_rdy = false;
+    while(!got_rdy) {
+      Serial.printf("Sending QRY? request to slaves...\n");
+      _tx_buf.to = RH_BROADCAST_ADDRESS;
+      _tx_buf.len = sizeof(radio_msg_t);
+      _tx_buf.p_hdr->type = msg_test_qry;
+      bool sent = unacknowledged_tx();
+      if (check_interrupt(false))
         return;
-    }
-
-    // Send Test Definition
-    tx_msg_len = sizeof(radio_msg_t) + sizeof(lora_testdef_t);
-    tx_header->type = msg_test_testdef;
-    memcpy(&tx_buf[MSG_PAYLOAD_START], tx_testdef, sizeof(lora_testdef_t));
-    
-    dbg_print_cfg(&tx_testdef->cfg);
-    Serial.printf("Sending %d bytes!\n", tx_msg_len);
-    sent = _rf95.send(tx_buf, tx_msg_len);
-    _rf95.waitPacketSent();
-    Serial.printf("TX Test Definition : [%s]\n", sent ? "Successful" : "Failed");
-
-    // Receive ACK! (No Payload Expected)
-    got_ack = false;
-    while (!_rf95.available()) {};
-    rx_msg_len = sizeof(rx_buf);
-    _rf95.recv(rx_buf, &rx_msg_len);
-    Serial.printf("Received %d bytes!\n", rx_msg_len);
-    Serial.printf("Expected %d bytes!\n", sizeof(radio_msg_t));  
-    if (rx_msg_len >= sizeof(radio_msg_t)) {
-        if (rx_header->type == msg_test_ack) {
-            got_ack = true;
-        }
-    }
-    Serial.printf("RX ACK! : [%s]\n", got_ack ? "Successful" : "Failed"); 
-    
-    // Update to current test definition
-    set_cfg(&tx_testdef->cfg);
-
-    uint8_t cnt = 0;
-    while (cnt < tx_testdef->packet_cnt) {
-        breakout_set_led(BO_LED_1, false);
-        while (!_rf95.available()) {};
+      if (!sent) {
+        delay(500);
+        continue;
+      }
+      Serial.printf("Waiting for RDY! from a slave...\n");
+      _rx_buf.len = LEN_MSG_EMPTY;
+      got_rdy = acknowledged_rx(0);
+      if (got_rdy) {
         breakout_set_led(BO_LED_1, true);
-        Serial.printf("Received %d bytes! - ", rx_msg_len);
-        rx_msg_len = sizeof(rx_buf);
-        _rf95.recv(rx_buf, &rx_msg_len);
-        if (rx_msg_len >= sizeof(radio_msg_t)) {
-            if (rx_header->type == msg_test_packet) {
-                cnt++;
-                Serial.printf("Test Packet!");
-            } else {
-                Serial.printf("??? Packet");
-            }
-        }
+        breakout_set_led(BO_LED_2, true);
+        breakout_set_led(BO_LED_3, true);
+      }
+      if (!got_rdy || check_interrupt(false))
+        return;
+      // Verify received message is a query
+      got_rdy = (_rx_buf.p_hdr->type == msg_test_rdy);
+      got_rdy &= _rx_buf.from != RH_BROADCAST_ADDRESS;
+      got_rdy &= _rx_buf.to == _rf95_dg.thisAddress();
+      Serial.printf("Received message is%s a RDY!\n", got_rdy ? "" : " not");
     }
-    breakout_set_led(BO_LED_1, false);
-    breakout_set_led(BO_LED_2, true);
-
 }
 
 void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
-    // Setup TX Buffer
-    uint8_t tx_msg_len = 0;
-    uint8_t tx_buf[RH_RF95_MAX_MESSAGE_LEN];
-    radio_msg_t* tx_header = (radio_msg_t*) &tx_buf[MSG_HEADER_START];
-    //strcpy(tx_header->radio_id, _module_cfg.radio_id);
-    // Setup RX Buffer
-    uint8_t rx_msg_len = 0;
-    uint8_t rx_buf[RH_RF95_MAX_MESSAGE_LEN];
-    radio_msg_t* rx_header = (radio_msg_t*) &rx_buf[MSG_HEADER_START];
-
-    // Receive RDY? (No Payload Expected)
-    bool got_rdy = false;
-    Serial.printf("Waiting for RDY?...\n");
-    while (!_rf95.available()) {};
-    rx_msg_len = sizeof(rx_buf);
-    _rf95.recv(rx_buf, &rx_msg_len);
-    Serial.printf("Received %d bytes!\n", rx_msg_len);
-    Serial.printf("Expected %d bytes!\n", LEN_MSG_EMPTY);  
-    if (rx_msg_len >= LEN_MSG_EMPTY) {
-        if (rx_header->type == msg_test_rdy) {
-            got_rdy = true;
-        } else {
-            Serial.printf("Not a ready!\n"); 
-        }
+  // Wait for QRY?
+  Serial.printf("Waiting for QRY? from a master...\n");
+  bool got_qry = false;
+  while (!got_qry) {
+    _rx_buf.len = LEN_MSG_EMPTY;
+    got_qry = unacknowledged_rx();
+    if (check_interrupt(false))
+      return;
+    if (!got_qry) {
+      delay(1000);
+      continue;
     }
-    if (!got_rdy) {
-        return;
-    }
+    // Verify received message is a query
+    got_qry &= (_rx_buf.p_hdr->type == msg_test_qry);
+    got_qry &= _rx_buf.from != RH_BROADCAST_ADDRESS;
+    got_qry &= _rx_buf.to == RH_BROADCAST_ADDRESS;
+    Serial.printf("Received message is%s a QRY?\n", got_qry ? "" : " not");
+  }
+  
+  // Respond to queryer with a RDY!
+  _tx_buf.to = _rx_buf.from;
+  _tx_buf.len = sizeof(radio_msg_t);
+  _tx_buf.p_hdr->type = msg_test_rdy;
+  Serial.printf("Responding with RDY! to master...\n");
+  bool acked_rdy = acknowledged_tx(3);
+  if (!acked_rdy || check_interrupt(false))
+    return;
+  Serial.printf("Got acknowledgment to RDY!\n");
 
-    // Send ACK! (No Payload)
-    tx_msg_len = LEN_MSG_EMPTY;
-    tx_header->type = msg_test_ack;
-    _rf95.send(tx_buf, tx_msg_len);
-    _rf95.waitPacketSent();
+}
 
-    // Receive Test Definition
-    Serial.printf("Waiting for Test Definition...\n");
-    while (!_rf95.available()) {};
-    rx_msg_len = sizeof(rx_buf);
-    _rf95.recv(rx_buf, &rx_msg_len);
-    Serial.printf("Received %d bytes!\n", rx_msg_len);
-    Serial.printf("Expected %d bytes!\n", LEN_MSG_EMPTY + sizeof(lora_testdef_t));  
-    if (rx_header->type == msg_test_testdef) {
-        if (rx_msg_len - sizeof(lora_testdef_t)) {
-            memcpy(rx_testdef, &rx_buf[MSG_PAYLOAD_START], sizeof(lora_testdef_t));
-            dbg_print_cfg(&rx_testdef->cfg);
-        } else {
-            Serial.printf("Not long enough for test def");
-        }
-    }
-
-    // Send ACK! (No Payload)
-    tx_msg_len = LEN_MSG_EMPTY;
-    tx_header->type = msg_test_ack;
-    _rf95.send(tx_buf, tx_msg_len);
-    _rf95.waitPacketSent();
-
-    // Send packets
-    set_cfg(&rx_testdef->cfg);
+    // Serial.printf("RX ACK! : [%s]\n", got_ack ? "Successful" : "Failed"); 
     
-    delay(100);
-    uint8_t cnt = 0;
-    while (cnt < rx_testdef->packet_cnt) {
-        // Send ACK! (No Payload)
-        tx_msg_len = LEN_MSG_EMPTY;
-        tx_header->type = msg_test_packet;
-        _rf95.send(tx_buf, tx_msg_len);
-        _rf95.waitPacketSent();
-        cnt++;
-        breakout_set_led(BO_LED_1, true);
-        delay(200);
-        breakout_set_led(BO_LED_1, false);
-    }
+    // if (got_ack == false) {
+    //     return;
+    // }
 
+    // // Send Test Definition
+    // tx_msg_len = sizeof(radio_msg_t) + sizeof(lora_testdef_t);
+    // tx_header->type = msg_test_testdef;
+    // memcpy(&tx_buf[MSG_PAYLOAD_START], tx_testdef, sizeof(lora_testdef_t));
+    
+    // dbg_print_cfg(&tx_testdef->cfg);
+    // Serial.printf("Sending %d bytes!\n", tx_msg_len);
+    // sent = _rf95.send(tx_buf, tx_msg_len);
+    // _rf95.waitPacketSent();
+    // Serial.printf("TX Test Definition : [%s]\n", sent ? "Successful" : "Failed");
+
+    // // Receive ACK! (No Payload Expected)
+    // got_ack = false;
+    // while (!_rf95.available()) {};
+    // rx_msg_len = sizeof(rx_buf);
+    // _rf95.recv(rx_buf, &rx_msg_len);
+    // Serial.printf("Received %d bytes!\n", rx_msg_len);
+    // Serial.printf("Expected %d bytes!\n", sizeof(radio_msg_t));  
+    // if (rx_msg_len >= sizeof(radio_msg_t)) {
+    //     if (rx_header->type == msg_test_ack) {
+    //         got_ack = true;
+    //     }
+    // }
+    // Serial.printf("RX ACK! : [%s]\n", got_ack ? "Successful" : "Failed"); 
+    
+    // // Update to current test definition
+    // set_cfg(&tx_testdef->cfg);
+
+    // uint8_t cnt = 0;
+    // while (cnt < tx_testdef->packet_cnt) {
+    //     breakout_set_led(BO_LED_1, false);
+    //     while (!_rf95.available()) {};
+    //     breakout_set_led(BO_LED_1, true);
+    //     Serial.printf("Received %d bytes! - ", rx_msg_len);
+    //     rx_msg_len = sizeof(rx_buf);
+    //     _rf95.recv(rx_buf, &rx_msg_len);
+    //     if (rx_msg_len >= sizeof(radio_msg_t)) {
+    //         if (rx_header->type == msg_test_packet) {
+    //             cnt++;
+    //             Serial.printf("Test Packet!\n");
+    //         } else {
+    //             Serial.printf("??? Packet\n");
+    //         }
+    //     }
+    // }
+    // Serial.printf("Finished receiving packets!");
+    // breakout_set_led(BO_LED_1, false);
+    // breakout_set_led(BO_LED_2, true);
+
+// void LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
+//     // Setup TX Buffer
+//     uint8_t tx_msg_len = 0;
+//     uint8_t tx_buf[RH_RF95_MAX_MESSAGE_LEN];
+//     radio_msg_t* tx_header = (radio_msg_t*) &tx_buf[MSG_HEADER_START];
+//     // Setup RX Buffer
+//     uint8_t rx_msg_len = 0;
+//     uint8_t rx_buf[RH_RF95_MAX_MESSAGE_LEN];
+//     radio_msg_t* rx_header = (radio_msg_t*) &rx_buf[MSG_HEADER_START];
+
+//     // Receive RDY? (No Payload Expected)
+//     bool got_rdy = false;
+//     Serial.printf("Waiting for RDY?...\n");
+//     while (!_rf95.available()) {};
+//     rx_msg_len = sizeof(rx_buf);
+//     _rf95.recv(rx_buf, &rx_msg_len);
+//     Serial.printf("Received %d bytes!\n", rx_msg_len);
+//     Serial.printf("Expected %d bytes!\n", LEN_MSG_EMPTY);  
+//     if (rx_msg_len >= LEN_MSG_EMPTY) {
+//         if (rx_header->type == msg_test_rdy) {
+//             got_rdy = true;
+//         } else {
+//             Serial.printf("Not a ready!\n"); 
+//         }
+//     }
+//     if (!got_rdy) {
+//         return;
+//     }
+
+//     // Send ACK! (No Payload)
+//     tx_msg_len = LEN_MSG_EMPTY;
+//     tx_header->type = msg_test_ack;
+//     _rf95.send(tx_buf, tx_msg_len);
+//     _rf95.waitPacketSent();
+
+//     // Receive Test Definition
+//     Serial.printf("Waiting for Test Definition...\n");
+//     while (!_rf95.available()) {};
+//     rx_msg_len = sizeof(rx_buf);
+//     _rf95.recv(rx_buf, &rx_msg_len);
+//     Serial.printf("Received %d bytes!\n", rx_msg_len);
+//     Serial.printf("Expected %d bytes!\n", LEN_MSG_EMPTY + sizeof(lora_testdef_t));  
+//     if (rx_header->type == msg_test_testdef) {
+//         if (rx_msg_len - sizeof(lora_testdef_t)) {
+//             memcpy(rx_testdef, &rx_buf[MSG_PAYLOAD_START], sizeof(lora_testdef_t));
+//             dbg_print_cfg(&rx_testdef->cfg);
+//         } else {
+//             Serial.printf("Not long enough for test def");
+//         }
+//     }
+
+//     // Send ACK! (No Payload)
+//     tx_msg_len = LEN_MSG_EMPTY;
+//     tx_header->type = msg_test_ack;
+//     _rf95.send(tx_buf, tx_msg_len);
+//     _rf95.waitPacketSent();
+
+//     // Send packets
+//     set_cfg(&rx_testdef->cfg);
+    
+//     delay(100);
+//     uint8_t cnt = 0;
+//     while (cnt < rx_testdef->packet_cnt) {
+//         Serial.printf("Sending packet!\n");
+//         // Send ACK! (No Payload)
+//         tx_msg_len = LEN_MSG_EMPTY;
+//         tx_header->type = msg_test_packet;
+//         _rf95.send(tx_buf, tx_msg_len);
+//         _rf95.waitPacketSent();
+//         cnt++;
+//         breakout_set_led(BO_LED_1, true);
+//         delay(200);
+//         breakout_set_led(BO_LED_1, false);
+//     }
+//     Serial.printf("Finished sending packets!\n");
+// }
+
+void LoRaModule::set_interrupt(bool value) {
+  _interrupt = value;
+}
+
+bool LoRaModule::check_interrupt(bool clear) {
+  bool val = _interrupt;
+  if (clear) {
+    _interrupt = false;
+  }
+  return val;
 }
 
 void LoRaModule::dbg_print_cur_cfg(void) {
-    Serial.printf("Current Radio Configuration:\n");
-    dbg_print_cfg(&_cur_cfg, false);
+  Serial.printf("Current Radio Configuration:\n");
+  dbg_print_cfg(&_cur_cfg, false);
 }
 
 void LoRaModule::dbg_print_cfg(lora_cfg_t *cfg, bool title) {
-    if (title) {
-        Serial.printf("Radio Configuration:\n");
-    }
-    Serial.printf("* Frequency (MHz): %.0f\n", cfg->freq);
-    Serial.printf("* Spreading Factor: %d\n", cfg->sf);
-    Serial.printf("* Power (dBm): %d\n", cfg->tx_dbm);
-    Serial.printf("* Bandwidth (Hz): %d\n", cfg->bw);
-    Serial.printf("* Coding rate: 4 / %d \n", cfg->cr4_denom);
-    Serial.printf("* CRC Enable: %d\n", cfg->crc);
+  if (title) {
+    Serial.printf("Radio Configuration:\n");
+  }
+  Serial.printf("* Frequency (MHz): %.0f\n", cfg->freq);
+  Serial.printf("* Spreading Factor: %d\n", cfg->sf);
+  Serial.printf("* Power (dBm): %d\n", cfg->tx_dbm);
+  Serial.printf("* Bandwidth (Hz): %d\n", cfg->bw);
+  Serial.printf("* Coding rate: 4 / %d \n", cfg->cr4_denom);
+  Serial.printf("* CRC Enable: %d\n", cfg->crc);
+}
+
+void LoRaModule::dbg_print_testdef(lora_testdef_t *testdef) {
+  Serial.printf("Test Definition: %s\n", testdef->id);
+  Serial.printf("* Packet Length: %d\n", testdef->packet_len);
+  Serial.printf("* Packet Count: %d\n", testdef->packet_cnt);
+  dbg_print_cfg(&testdef->cfg, false);
 }
 
