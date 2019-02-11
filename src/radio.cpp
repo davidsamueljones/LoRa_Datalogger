@@ -3,6 +3,9 @@
 #include "breakout.h"
 
 #define SINGLE_RX_CHECK_TIMEOUT (500)
+#define RDY_RX_TIMEOUT (3000)
+#define TESTDEF_RX_TIMEOUT (5000)
+#define ACK_TIMEOUT (1000)
 
 lora_cfg_t hc_base_cfg = {
   .freq = 868.0f,
@@ -10,6 +13,7 @@ lora_cfg_t hc_base_cfg = {
   .tx_dbm = 14,
   .bw = 125000,
   .cr4_denom = 5,
+  .preamble_syms = 8,
   .crc = true,
 };
 
@@ -39,7 +43,7 @@ bool LoRaModule::radio_init(void) {
   Serial.printf("Initialising radio driver...\n"); 
   bool success = _rf95_dg.init();
   // We need an unreasonably long timeout to detect ACKs, not sure why (TODO)
-  _rf95_dg.setTimeout(1000); 
+  _rf95_dg.setTimeout(ACK_TIMEOUT); 
   // Initialise any buffer values
   _tx_buf.from = _rf95_dg.thisAddress();
   return success;
@@ -56,6 +60,7 @@ void LoRaModule::set_cfg(lora_cfg_t *new_cfg) {
   _rf95.setTxPower(new_cfg->tx_dbm);
   _rf95.setSignalBandwidth(new_cfg->bw);
   _rf95.setCodingRate4(new_cfg->cr4_denom);
+  _rf95.setPreambleLength(new_cfg->preamble_syms);
   _rf95.setPayloadCRC(new_cfg->crc);
   _cur_cfg = *new_cfg;
   Serial.printf("Configuration set!\n");
@@ -87,7 +92,7 @@ bool LoRaModule::unacknowledged_tx(void) {
   Serial.printf("Sending unacknowledged %d bytes...\n", _tx_buf.len);
   bool queued = _rf95_dg.sendto(_tx_buf.data, _tx_buf.len, _tx_buf.to);
   if (!queued) {
-    Serial.printf("TX queued unsucessfully!");
+    Serial.printf("TX queued unsucessfully!\n");
     return false;
   }
   // Wait until it has actually been sent
@@ -157,7 +162,6 @@ bool LoRaModule::unacknowledged_rx(uint16_t timeout) {
   return received;
 }
 
-
 bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
     // Reset to agreed base 
     g_radio_a->reset_to_base_cfg();
@@ -178,7 +182,7 @@ bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
       }
       Serial.printf("Waiting for RDY! from a slave...\n");
       _rx_buf.len = LEN_MSG_EMPTY;
-      got_rdy = acknowledged_rx(3000);
+      got_rdy = acknowledged_rx(RDY_RX_TIMEOUT);
       if (!got_rdy || check_interrupt(false))
         return false;
       // Verify received message is a RDY!
@@ -244,7 +248,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   while (!got_testdef) {
     // Give up if we haven't received any message within a timeout of the last
     _rx_buf.len = LEN_MSG_TESTDEF;
-    got_testdef = acknowledged_rx(3000);
+    got_testdef = acknowledged_rx(TESTDEF_RX_TIMEOUT);
     if (!got_testdef || check_interrupt(false))
       return false;
     // Verify received message is a test definition
@@ -266,7 +270,6 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
         MIN_TESTDEF_PACKET_LEN, MAX_TESTDEF_PACKET_LEN, testdef->packet_len);
     return false;
   }
-  
   // Use the mutually agreed configuration
   set_cfg(&testdef->cfg);
 
@@ -289,8 +292,10 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
   uint16_t packet = 0;
   uint32_t start_time = millis();
   while (packet < testdef->packet_cnt) {
-    if (check_interrupt(false))
+    if (check_interrupt(false)) {
+      Serial.printf("Interrupted when sending packets!\n", packet);
       return false;
+    }
     Serial.printf("Sending Packet %d...\n", packet);
     // If any fail to send we'll just ignore it, this shouldn't happen
     unacknowledged_tx();
@@ -356,6 +361,7 @@ void LoRaModule::dbg_print_cfg(lora_cfg_t *cfg, bool title) {
   Serial.printf("* Power (dBm): %d\n", cfg->tx_dbm);
   Serial.printf("* Bandwidth (Hz): %d\n", cfg->bw);
   Serial.printf("* Coding rate: 4 / %d \n", cfg->cr4_denom);
+  Serial.printf("* Preamble Symbols: %d \n", cfg->preamble_syms);
   Serial.printf("* CRC Enable: %d\n", cfg->crc);
 }
 
@@ -366,3 +372,7 @@ void LoRaModule::dbg_print_testdef(lora_testdef_t *testdef) {
   dbg_print_cfg(&testdef->cfg, false);
 }
 
+bool need_low_datarate(lora_cfg_t *cfg) {
+    float symbolTime = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
+    return symbolTime > 16.0;    
+}

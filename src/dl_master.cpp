@@ -19,6 +19,7 @@ lora_cfg_t g_testdef_cfg_a = {
   .tx_dbm = 14,
   .bw = 125000,
   .cr4_denom = 5,
+  .preamble_syms = 8,
   .crc = true,
 };
 
@@ -71,8 +72,6 @@ static void run_test_defs(void) {
 
   // Clear any set interrupt
   g_radio_a->set_interrupt(false);
-  // Reset to agreed base 
-  g_radio_a->reset_to_base_cfg();
 
   // Handshake to pass over test def
   g_radio_a->send_testdef(&g_testdef_a);

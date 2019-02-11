@@ -26,14 +26,17 @@ typedef struct lora_module_t {
 /*
   Full LoRa radio configuration. It is likely that many of the
   fields will be the same across various configurations.
+  Those denoted by (!) can be different between nodes, the others
+  must be consistent.
 */
 typedef struct lora_cfg_t {
-  float freq; // MHz
+  float freq;             // MHz
   uint8_t sf;
-  int8_t tx_dbm;
-  long bw; // Hz
-  uint8_t cr4_denom; // (4 / Val)
-  bool crc;
+  int8_t tx_dbm;          // (!)
+  long bw;                // Hz 
+  uint8_t cr4_denom;      // (4 / Val) (!)
+  uint8_t preamble_syms;
+  bool crc;               // (!)
 } lora_cfg_t;
 
 /*
@@ -118,6 +121,7 @@ class LoRaModule {
     bool recv_testdef(lora_testdef_t *recv_testdef);
 
     bool send_testdef_packets(lora_testdef_t *testdef);
+    bool recv_testdef_packets(lora_testdef_t *testdef);
 
     // Debug functions
     void dbg_print_cur_cfg(void);

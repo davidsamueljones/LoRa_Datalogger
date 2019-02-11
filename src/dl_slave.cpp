@@ -7,7 +7,7 @@
 #include "radio.h"
 
 static void ISR_switch_state_change(void);
-static void run_test_defs(void);
+static void recv_and_execute_testdef(void);
 static void handle_loop_mode_mid(void);
 static void handle_loop_mode_bot(void);
 
@@ -19,7 +19,7 @@ void setup() {
 void loop() {
   switch (breakout_get_switch_state()) {
     case sw_state_top:
-      run_test_defs();
+      recv_and_execute_testdef();
       break;
     case sw_state_mid:
       handle_loop_mode_mid();
@@ -41,7 +41,7 @@ static void ISR_switch_state_change(void) {
   g_radio_a->set_interrupt(true);
 }
 
-static void run_test_defs(void) {
+static void recv_and_execute_testdef(void) {
   // Run Test Definitions
   breakout_set_led(BO_LED_1, false);
   breakout_set_led(BO_LED_2, false);
