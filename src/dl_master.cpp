@@ -31,7 +31,7 @@ void setup() {
   // Define an inbuilt test definition
   strcpy(g_testdef_a.id, "Test_A");
   g_testdef_a.packet_cnt = 10;
-  g_testdef_a.packet_len = 60;
+  g_testdef_a.packet_len = 255;
   g_testdef_a.cfg = g_testdef_cfg_a;
 
   Serial.printf("Booted as %s!\n", BOARD_TYPE);
@@ -74,7 +74,11 @@ static void run_test_defs(void) {
   g_radio_a->set_interrupt(false);
 
   // Handshake to pass over test def
-  g_radio_a->send_testdef(&g_testdef_a);
+  bool recv_testdef = g_radio_a->send_testdef(&g_testdef_a);
+  if (recv_testdef) {
+    g_radio_a->recv_testdef_packets(&g_testdef_a);
+  }
+
   while (breakout_get_switch_state() != sw_state_mid) {}
 }
 

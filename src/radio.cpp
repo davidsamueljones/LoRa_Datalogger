@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <math.h>
+
 #include "radio.h"
 #include "breakout.h"
 
@@ -7,9 +9,16 @@
 #define TESTDEF_RX_TIMEOUT (5000)
 #define ACK_TIMEOUT (1000)
 
+// Delay from after configuration before slave starts sending packets
+#define SLAVE_PACKET_SEND_DELAY (1000)
+
+// Airtime will not reflect all time for a single packet, will require extra processing.
+// TODO: Currently captured as a simple multiplier, is something more sophisticated better?
+#define AIRTIME_MULTIPLIER 1.2
+
 lora_cfg_t hc_base_cfg = {
   .freq = 868.0f,
-  .sf = 13,
+  .sf = 12,
   .tx_dbm = 14,
   .bw = 125000,
   .cr4_denom = 5,
@@ -252,7 +261,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
     if (!got_testdef || check_interrupt(false))
       return false;
     // Verify received message is a test definition
-    got_testdef &= (_rx_buf.p_hdr->type == msg_test_testdef);
+    got_testdef &= _rx_buf.p_hdr->type == msg_test_testdef;
     got_testdef &= _rx_buf.from == master_id;
     got_testdef &= _rx_buf.to == _rf95_dg.thisAddress();
   }
@@ -274,20 +283,22 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
   set_cfg(&testdef->cfg);
 
   // Configure message
-  _tx_buf.to = testdef->slave_id;
+  _tx_buf.to = testdef->master_id;
   _tx_buf.p_hdr->type = msg_test_packet;
   _tx_buf.len = testdef->packet_len - RH_RF95_HEADER_LEN;
   uint8_t payload_len = _tx_buf.len - LEN_MSG_EMPTY;
+    
   // Repeating pattern every 4 bytes for irrelevent data
-  for (uint8_t i=0; i < (payload_len / 4) + 1; i++) {
-    _tx_buf.data[i*4+0] = 0xF0; 
-    _tx_buf.data[i*4+1] = 0x0F;
-    _tx_buf.data[i*4+2] = 0xAA;
-    _tx_buf.data[i*4+3] = 0x55;
+  uint8_t pattern[] = {0xF0, 0x0F, 0xAA, 0x55};
+  for (uint8_t i=0; i < payload_len; i++) {
+    _tx_buf.data[MSG_PAYLOAD_START + i] = pattern[payload_len % 
+                                              sizeof(pattern) / sizeof(pattern[0])]; 
   }
   Serial.printf("Sending %d packets of length %d...\n", 
     testdef->packet_cnt, testdef->packet_len);
-  
+  // Give the master some time to prepare
+  delay(SLAVE_PACKET_SEND_DELAY);
+
   // Fire and forget the number of packets requested
   uint16_t packet = 0;
   uint32_t start_time = millis();
@@ -297,43 +308,59 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
       return false;
     }
     Serial.printf("Sending Packet %d...\n", packet);
+    _tx_buf.p_hdr->id = packet;
     // If any fail to send we'll just ignore it, this shouldn't happen
     unacknowledged_tx();
     packet++;
   }
-  uint32_t end_time = millis();
-  // Calculate the sending duration, account for a single wrap
-  uint32_t duration = start_time < end_time ? 
-        end_time - start_time : start_time - end_time;
+  // Calculate the sending duration, not worrying about wraps, should be good
+  // for 49 days...
+  uint32_t duration = millis() - start_time;
   Serial.printf("Took %dms to send all packets!\n", duration);
   return true;
 }
 
-// // Update to current test definition
-// set_cfg(&tx_testdef->cfg);
+bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
+  // Use the mutually agreed configuration
+  set_cfg(&testdef->cfg);
+  uint16_t valid_packets = 0;
 
-// uint8_t cnt = 0;
-// while (cnt < tx_testdef->packet_cnt) {
-//     breakout_set_led(BO_LED_1, false);
-//     while (!_rf95.available()) {};
-//     breakout_set_led(BO_LED_1, true);
-//     Serial.printf("Received %d bytes! - ", rx_msg_len);
-//     rx_msg_len = sizeof(rx_buf);
-//     _rf95.recv(rx_buf, &rx_msg_len);
-//     if (rx_msg_len >= sizeof(radio_msg_t)) {
-//         if (rx_header->type == msg_test_packet) {
-//             cnt++;
-//             Serial.printf("Test Packet!\n");
-//         } else {
-//             Serial.printf("??? Packet\n");
-//         }
-//     }
-// }
-// Serial.printf("Finished receiving packets!");
-// breakout_set_led(BO_LED_1, false);
-// breakout_set_led(BO_LED_2, true);
-
-
+  // Determine a timeout that should allow all packets to be captured
+  uint32_t packet_airtime = calculate_packet_airtime(&testdef->cfg, testdef->packet_len);
+  uint32_t packet_timeout = packet_airtime * AIRTIME_MULTIPLIER;
+  uint32_t timeout = packet_timeout * (testdef->packet_cnt+1) + SLAVE_PACKET_SEND_DELAY;
+  Serial.printf("Waiting for packets for %dms...\n", timeout);
+  uint32_t start_time = millis();
+  int32_t time_left = 0;
+  while ((time_left = timeout - (millis() - start_time)) > 0) {
+    if (check_interrupt(false)) {
+      Serial.printf("Interrupted when receiving packets!\n");
+      return false;
+    }
+    _rx_buf.len = testdef->packet_len - RH_RF95_HEADER_LEN;
+    bool got_packet = unacknowledged_rx(SINGLE_RX_CHECK_TIMEOUT);
+    if (got_packet) {
+      // Verify received message is a test packet, contents should be
+      // pre-verified by crc check so only valid packets should reach this stage
+      got_packet &= _rx_buf.p_hdr->type == msg_test_packet;
+      got_packet &= _rx_buf.from == testdef->slave_id;
+      got_packet &= _rx_buf.to == testdef->master_id;
+      got_packet &= (_rx_buf.len + RH_RF95_HEADER_LEN) == testdef->packet_len;
+      if (got_packet) {
+        valid_packets++;
+        Serial.printf("Received packet: %d [%d/%d]\n", _rx_buf.p_hdr->id, 
+                                            valid_packets, testdef->packet_cnt);
+        // TODO: Capture statistics
+        // Got the last packet, may as well stop
+        if (_rx_buf.p_hdr->id == (testdef->packet_cnt - 1)) {
+          break;
+        }
+      }
+    }
+  }
+  Serial.printf("Finished receiving [%d/%d] packets!\n", valid_packets, testdef->packet_cnt);
+  return true;
+}
 
 void LoRaModule::set_interrupt(bool value) {
   _interrupt = value;
@@ -372,7 +399,26 @@ void LoRaModule::dbg_print_testdef(lora_testdef_t *testdef) {
   dbg_print_cfg(&testdef->cfg, false);
 }
 
-bool need_low_datarate(lora_cfg_t *cfg) {
-    float symbolTime = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
-    return symbolTime > 16.0;    
+uint32_t LoRaModule::calculate_packet_airtime(lora_cfg_t *cfg, uint16_t packet_len) {
+    // All equations used from (modified slightly for our formats):
+    // https://www.semtech.com/uploads/documents/LoraDesignGuide_STD.pdf
+
+    float symbol_time = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
+    float preamble_time = (cfg->preamble_syms + 4.25) * symbol_time;
+    bool ldr = is_low_datarate_required(cfg);
+    // N.B Explicit header is always enabled by RadioHead so -20 always present
+    uint16_t psc_top = 8 * packet_len - 4 * cfg->sf + 28 + 16 - 20;
+    uint16_t psc_bot = 4 * (cfg->sf - 2 * ldr);
+    uint16_t psc_lhs = (int) ceil(psc_top / psc_bot);
+    uint16_t payload_symbol_count = 8 + (max(psc_lhs * (cfg->cr4_denom), 0));
+    float payload_time = payload_symbol_count * symbol_time;
+    float total_time = preamble_time + payload_time;
+    return total_time;
+}
+
+bool LoRaModule::is_low_datarate_required(lora_cfg_t *cfg) {
+    float symbol_time = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
+    // Value of 16.0 for symbol time required for enabling low data rate is copied from
+    // RadioHead library. No source provided but keep the same for consistency.
+    return symbol_time > 16.0;    
 }

@@ -69,17 +69,18 @@ typedef enum radio_msg_type_t {
 
 /*
   Structure of our higher level packets, payload should directly
-  follow this header.
+  follow this header.  We have our own ID separate from RadioHead
+  so that we have more than 8 bits to work with.
   N.B: Use RadioHead datagram packet for addressed packets. 
 */
 typedef struct radio_msg_t {
   radio_msg_type_t type;
+  uint16_t id;
 } radio_msg_t;
 
 // Hardcoded positions to place data in a message
 #define MSG_HEADER_START (0)
 #define MSG_PAYLOAD_START (sizeof(radio_msg_t))
-
 #define LEN_MSG_EMPTY (sizeof(radio_msg_t))
 #define LEN_MSG_WITH_PAYLOAD(PAYLOAD_LENGTH) (LEN_MSG_EMPTY + PAYLOAD_LENGTH)
 
@@ -122,6 +123,9 @@ class LoRaModule {
 
     bool send_testdef_packets(lora_testdef_t *testdef);
     bool recv_testdef_packets(lora_testdef_t *testdef);
+
+    static bool is_low_datarate_required(lora_cfg_t *cfg);
+    static uint32_t calculate_packet_airtime(lora_cfg_t *cfg, uint16_t packet_len);
 
     // Debug functions
     void dbg_print_cur_cfg(void);
