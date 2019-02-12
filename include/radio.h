@@ -46,6 +46,9 @@ typedef struct lora_cfg_t {
 */
 typedef struct lora_testdef_t {
   char id[TESTDEF_ID_LEN];
+  // An arbitary user chosen value, can be used to discard testdefs
+  // that are almost guarenteed to fail
+  uint8_t exp_range; 
   uint16_t packet_cnt;
   uint8_t packet_len;
   lora_cfg_t cfg;
