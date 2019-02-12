@@ -7,10 +7,12 @@
 
 #include <Arduino.h>
 #include <RH_RF95.h>
-#include <RHDatagram.h>
 #include <RHReliableDatagram.h>
 
 #define TESTDEF_ID_LEN (10)
+
+#define NO_TIMEOUT (0)
+#define NO_ATTEMPT_LIMIT (0)
 
 /*
   Helper structure for holding information required to setup
@@ -112,12 +114,12 @@ class LoRaModule {
     void reset_to_base_cfg(void);
     void set_cfg(lora_cfg_t *new_cfg);
 
-    bool acknowledged_tx(uint8_t attempts);
-    bool unacknowledged_tx(void);
+    bool acknowledged_tx(radio_msg_buffer_t *tx_buf, uint8_t attempts = NO_ATTEMPT_LIMIT);
+    bool unacknowledged_tx(radio_msg_buffer_t *tx_buf);
     
-    bool acknowledged_rx(uint16_t timeout=0);
-    bool unacknowledged_rx(uint16_t timeout=0);
-
+    bool acknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout = NO_TIMEOUT);
+    bool unacknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout = NO_TIMEOUT);
+    
     bool send_testdef(lora_testdef_t *tx_testdef);
     bool recv_testdef(lora_testdef_t *recv_testdef);
 
@@ -141,11 +143,17 @@ class LoRaModule {
     // Addressed reliable interface
     RHReliableDatagram _rf95_dg;
   private:
+    // The pin configuration of the module 
     lora_module_t _module_cfg;
+    // The radio module configuration that is hardcoded and therefore predictable
     lora_cfg_t _base_cfg;
+    // The current radio module configuration
     lora_cfg_t _cur_cfg;
+    // Buffer used by default for all class defined transmissions
     radio_msg_buffer_t _tx_buf; // may get trashed during acknowledged transmissions
+    // Buffer used by default for all class defined receives
     radio_msg_buffer_t _rx_buf;
+    // Flag set when an external source wants current behaviour to finish
     volatile bool _interrupt;
 };
 

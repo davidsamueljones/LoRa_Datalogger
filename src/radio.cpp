@@ -37,7 +37,6 @@ LoRaModule::LoRaModule(lora_module_t *module_cfg, lora_cfg_t *base_cfg) :
   _interrupt(false)
   {}
 
-
 bool LoRaModule::radio_init(void) {
   // Configure reset pin
   pinMode(RFM95_RST, OUTPUT);
@@ -75,10 +74,10 @@ void LoRaModule::set_cfg(lora_cfg_t *new_cfg) {
   Serial.printf("Configuration set!\n");
 }
 
-bool LoRaModule::acknowledged_tx(uint8_t attempts) {
+bool LoRaModule::acknowledged_tx(radio_msg_buffer_t *tx_buf, uint8_t attempts) {
   bool sent = false;
   uint8_t attempt = 0;
-  Serial.printf("Sending acknowledged %d bytes...\n", _tx_buf.len);
+  Serial.printf("Sending acknowledged %d bytes...\n", tx_buf->len);
   // Disable retrying so we can escape in case of interrupt
   _rf95_dg.setRetries(1);
   // Handle multiple attempt behaviour, lots of retry behaviour not mirrored 
@@ -87,19 +86,19 @@ bool LoRaModule::acknowledged_tx(uint8_t attempts) {
     attempt++;
     Serial.printf("* Attempt: %d\n", attempt);
     if (check_interrupt(false)) {
-      Serial.printf("Interrupted waiting for acknowledged TX!\n", _tx_buf.len);
+      Serial.printf("Interrupted waiting for acknowledged TX!\n", tx_buf->len);
       break;
     }
-    sent = _rf95_dg.sendtoWait(_tx_buf.data, _tx_buf.len, _tx_buf.to);
+    sent = _rf95_dg.sendtoWait(tx_buf->data, tx_buf->len, tx_buf->to);
   } while (!sent && (attempts == 0 || attempt < attempts));
   
   Serial.printf("TX %s!\n", sent ? "successful" : "failed");
   return sent;
 }
 
-bool LoRaModule::unacknowledged_tx(void) {
-  Serial.printf("Sending unacknowledged %d bytes...\n", _tx_buf.len);
-  bool queued = _rf95_dg.sendto(_tx_buf.data, _tx_buf.len, _tx_buf.to);
+bool LoRaModule::unacknowledged_tx(radio_msg_buffer_t *tx_buf) {
+  Serial.printf("Sending unacknowledged %d bytes...\n", tx_buf->len);
+  bool queued = _rf95_dg.sendto(tx_buf->data, tx_buf->len, tx_buf->to);
   if (!queued) {
     Serial.printf("TX queued unsucessfully!\n");
     return false;
@@ -110,20 +109,20 @@ bool LoRaModule::unacknowledged_tx(void) {
   return sent;
 }
 
-bool LoRaModule::acknowledged_rx(uint16_t timeout) {
+bool LoRaModule::acknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout) {
   uint8_t exp_rx_len = _rx_buf.len;
   bool received = false;
   uint16_t time = 0;
   Serial.printf("Waiting for acknowledged RX...\n");
   while (!received && (timeout == 0 || time < timeout)) {
-      _rx_buf.len = exp_rx_len;
+      rx_buf->len = exp_rx_len;
       // Copy full message if length not pre-configured correctly
-      if (_rx_buf.len == 0 || _rx_buf.len > RH_RF95_MAX_MESSAGE_LEN) {
-        _rx_buf.len = RH_RF95_MAX_MESSAGE_LEN;
+      if (rx_buf->len == 0 || rx_buf->len > RH_RF95_MAX_MESSAGE_LEN) {
+        rx_buf->len = RH_RF95_MAX_MESSAGE_LEN;
       }
       // Wait for a message, receive it, and acknowledge it
-      received = _rf95_dg.recvfromAckTimeout(_rx_buf.data, &_rx_buf.len, 
-                                      SINGLE_RX_CHECK_TIMEOUT, &_rx_buf.from, &_rx_buf.to);
+      received = _rf95_dg.recvfromAckTimeout(rx_buf->data, &rx_buf->len, 
+                                      SINGLE_RX_CHECK_TIMEOUT, &rx_buf->from, &rx_buf->to);
       time += SINGLE_RX_CHECK_TIMEOUT;
       if (check_interrupt(false)) {
         Serial.printf("Interrupted waiting for RX!\n");
@@ -137,8 +136,8 @@ bool LoRaModule::acknowledged_rx(uint16_t timeout) {
   return received;
 }
 
-bool LoRaModule::unacknowledged_rx(uint16_t timeout) {
-  uint8_t exp_rx_len = _rx_buf.len;
+bool LoRaModule::unacknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout) {
+  uint8_t exp_rx_len = rx_buf->len;
   bool received = false;
   uint16_t time = 0;
   Serial.printf("Waiting for unacknowledged RX...\n");
@@ -149,15 +148,15 @@ bool LoRaModule::unacknowledged_rx(uint16_t timeout) {
     // Process message if one has arrived
     if (available) {
       // Copy full message if length not pre-configured correctly
-      _rx_buf.len = exp_rx_len;
-      if (_rx_buf.len == 0 || _rx_buf.len > RH_RF95_MAX_MESSAGE_LEN) {
-        _rx_buf.len = RH_RF95_MAX_MESSAGE_LEN;
+      rx_buf->len = exp_rx_len;
+      if (rx_buf->len == 0 || rx_buf->len > RH_RF95_MAX_MESSAGE_LEN) {
+        rx_buf->len = RH_RF95_MAX_MESSAGE_LEN;
       }
-      received = _rf95_dg.recvfrom(_rx_buf.data, &_rx_buf.len, 
-                                      &_rx_buf.from, &_rx_buf.to);
+      received = _rf95_dg.recvfrom(rx_buf->data, &rx_buf->len, 
+                                      &rx_buf->from, &rx_buf->to);
       // Count as failed receive if not meant for us
-      received &=  ((_rx_buf.to == RH_BROADCAST_ADDRESS) ||
-                    (_rx_buf.to == _rf95_dg.thisAddress()));
+      received &=  ((rx_buf->to == RH_BROADCAST_ADDRESS) ||
+                    (rx_buf->to == _rf95_dg.thisAddress()));
     }
     if (check_interrupt(false)) {
       Serial.printf("Interrupted waiting for RX!\n");
@@ -172,9 +171,6 @@ bool LoRaModule::unacknowledged_rx(uint16_t timeout) {
 }
 
 bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
-    // Reset to agreed base 
-    g_radio_a->reset_to_base_cfg();
-
     // Send QRY? and wait for someone to say RDY!
     bool got_rdy = false;
     while(!got_rdy) {
@@ -182,16 +178,12 @@ bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
       _tx_buf.to = RH_BROADCAST_ADDRESS;
       _tx_buf.len = sizeof(radio_msg_t);
       _tx_buf.p_hdr->type = msg_test_qry;
-      bool sent = unacknowledged_tx();
-      if (check_interrupt(false))
+      bool sent = unacknowledged_tx(&_tx_buf);
+      if (!sent || check_interrupt(false))
         return false;
-      if (!sent) {
-        delay(500);
-        continue;
-      }
       Serial.printf("Waiting for RDY! from a slave...\n");
       _rx_buf.len = LEN_MSG_EMPTY;
-      got_rdy = acknowledged_rx(RDY_RX_TIMEOUT);
+      got_rdy = acknowledged_rx(&_rx_buf, RDY_RX_TIMEOUT);
       if (!got_rdy || check_interrupt(false))
         return false;
       // Verify received message is a RDY!
@@ -211,7 +203,7 @@ bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
     _tx_buf.p_hdr->type = msg_test_testdef;
     memcpy(&_tx_buf.data[MSG_PAYLOAD_START], tx_testdef, sizeof(lora_testdef_t));
     dbg_print_testdef((lora_testdef_t*) &_tx_buf.data[MSG_PAYLOAD_START]);
-    bool acked_testdef = acknowledged_tx(3);
+    bool acked_testdef = acknowledged_tx(&_tx_buf, 3);
     if (!acked_testdef || check_interrupt(false))
       return false;  
     Serial.printf("Testdef delivered successfully!\n");
@@ -220,15 +212,12 @@ bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
 }
 
 bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
-  // Reset to agreed base 
-  g_radio_a->reset_to_base_cfg();
-  
   // Wait for QRY?
   Serial.printf("Waiting for QRY? from a master...\n");
   bool got_qry = false;
   while (!got_qry) {
     _rx_buf.len = LEN_MSG_EMPTY;
-    got_qry = unacknowledged_rx();
+    got_qry = unacknowledged_rx(&_rx_buf);
     if (!got_qry || check_interrupt(false))
       return false;
 
@@ -246,7 +235,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   _tx_buf.len = LEN_MSG_EMPTY;
   _tx_buf.p_hdr->type = msg_test_rdy;
   Serial.printf("Responding with RDY! to master...\n");
-  bool acked_rdy = acknowledged_tx(3);
+  bool acked_rdy = acknowledged_tx(&_tx_buf, 3);
   if (!acked_rdy || check_interrupt(false))
     return false;
   Serial.printf("Got acknowledgment to RDY!\n");
@@ -257,7 +246,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   while (!got_testdef) {
     // Give up if we haven't received any message within a timeout of the last
     _rx_buf.len = LEN_MSG_TESTDEF;
-    got_testdef = acknowledged_rx(TESTDEF_RX_TIMEOUT);
+    got_testdef = acknowledged_rx(&_rx_buf, TESTDEF_RX_TIMEOUT);
     if (!got_testdef || check_interrupt(false))
       return false;
     // Verify received message is a test definition
@@ -310,7 +299,7 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
     Serial.printf("Sending Packet %d...\n", packet);
     _tx_buf.p_hdr->id = packet;
     // If any fail to send we'll just ignore it, this shouldn't happen
-    unacknowledged_tx();
+    unacknowledged_tx(&_tx_buf);
     packet++;
   }
   // Calculate the sending duration, not worrying about wraps, should be good
@@ -338,7 +327,7 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
       return false;
     }
     _rx_buf.len = testdef->packet_len - RH_RF95_HEADER_LEN;
-    bool got_packet = unacknowledged_rx(SINGLE_RX_CHECK_TIMEOUT);
+    bool got_packet = unacknowledged_rx(&_rx_buf, SINGLE_RX_CHECK_TIMEOUT);
     if (got_packet) {
       // Verify received message is a test packet, contents should be
       // pre-verified by crc check so only valid packets should reach this stage
@@ -360,6 +349,31 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
   }
   Serial.printf("Finished receiving [%d/%d] packets!\n", valid_packets, testdef->packet_cnt);
   return true;
+}
+
+
+uint32_t LoRaModule::calculate_packet_airtime(lora_cfg_t *cfg, uint16_t packet_len) {
+    // All equations used from (modified slightly for our formats):
+    // https://www.semtech.com/uploads/documents/LoraDesignGuide_STD.pdf
+
+    float symbol_time = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
+    float preamble_time = (cfg->preamble_syms + 4.25) * symbol_time;
+    bool ldr = is_low_datarate_required(cfg);
+    // N.B Explicit header is always enabled by RadioHead so -20 always present
+    uint16_t psc_top = 8 * packet_len - 4 * cfg->sf + 28 + 16 - 20;
+    uint16_t psc_bot = 4 * (cfg->sf - 2 * ldr);
+    uint16_t psc_lhs = (int) ceil(psc_top / psc_bot);
+    uint16_t payload_symbol_count = 8 + (max(psc_lhs * (cfg->cr4_denom), 0));
+    float payload_time = payload_symbol_count * symbol_time;
+    float total_time = preamble_time + payload_time;
+    return total_time;
+}
+
+bool LoRaModule::is_low_datarate_required(lora_cfg_t *cfg) {
+    float symbol_time = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
+    // Value of 16.0 for symbol time required for enabling low data rate is copied from
+    // RadioHead library. No source provided but keep the same for consistency.
+    return symbol_time > 16.0;    
 }
 
 void LoRaModule::set_interrupt(bool value) {
@@ -397,28 +411,4 @@ void LoRaModule::dbg_print_testdef(lora_testdef_t *testdef) {
   Serial.printf("* Packet Length: %d\n", testdef->packet_len);
   Serial.printf("* Packet Count: %d\n", testdef->packet_cnt);
   dbg_print_cfg(&testdef->cfg, false);
-}
-
-uint32_t LoRaModule::calculate_packet_airtime(lora_cfg_t *cfg, uint16_t packet_len) {
-    // All equations used from (modified slightly for our formats):
-    // https://www.semtech.com/uploads/documents/LoraDesignGuide_STD.pdf
-
-    float symbol_time = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
-    float preamble_time = (cfg->preamble_syms + 4.25) * symbol_time;
-    bool ldr = is_low_datarate_required(cfg);
-    // N.B Explicit header is always enabled by RadioHead so -20 always present
-    uint16_t psc_top = 8 * packet_len - 4 * cfg->sf + 28 + 16 - 20;
-    uint16_t psc_bot = 4 * (cfg->sf - 2 * ldr);
-    uint16_t psc_lhs = (int) ceil(psc_top / psc_bot);
-    uint16_t payload_symbol_count = 8 + (max(psc_lhs * (cfg->cr4_denom), 0));
-    float payload_time = payload_symbol_count * symbol_time;
-    float total_time = preamble_time + payload_time;
-    return total_time;
-}
-
-bool LoRaModule::is_low_datarate_required(lora_cfg_t *cfg) {
-    float symbol_time = 1000.0 * pow(2, cfg->sf) / cfg->bw;	// ms
-    // Value of 16.0 for symbol time required for enabling low data rate is copied from
-    // RadioHead library. No source provided but keep the same for consistency.
-    return symbol_time > 16.0;    
 }
