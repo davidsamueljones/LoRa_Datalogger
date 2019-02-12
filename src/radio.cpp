@@ -448,7 +448,7 @@ void LoRaModule::dbg_print_cfg(lora_cfg_t *cfg, bool title) {
 
 void LoRaModule::dbg_print_testdef(lora_testdef_t *testdef) {
   Serial.printf("Test Definition: %s\n", testdef->id);
-  erial.printf("* Expected Range: %d\n", testdef->exp_range);
+  Serial.printf("* Expected Range: %d\n", testdef->exp_range);
   Serial.printf("* Packet Length: %d\n", testdef->packet_len);
   Serial.printf("* Packet Count: %d\n", testdef->packet_cnt);
   dbg_print_cfg(&testdef->cfg, false);
