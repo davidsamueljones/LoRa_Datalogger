@@ -10,9 +10,10 @@ static void print_date_time(void);
 bool dl_common_boot(void switch_isr(void)) {
   // Initialise breakout board
   breakout_init();
-  breakout_set_led(BO_LED_1, true); // Waiting for serial
-  breakout_set_led(BO_LED_2, true); // Waiting for radio
-  breakout_set_led(BO_LED_3, true); // Waiting for rest of boot
+  breakout_set_led(BO_LED_3, true); // Waiting for serial
+  breakout_set_led(BO_LED_1, true); // Waiting for radio
+  breakout_set_led(BO_LED_2, true); // Waiting for rest of boot
+
 
   // Initialise serial connectivity
   Serial.begin(115200);
@@ -20,7 +21,7 @@ bool dl_common_boot(void switch_isr(void)) {
   // Warning: Not valid for all possible microcontrollers, ideal behaviour will
   // mean bootup will be delayed until serial monitor open
   while (breakout_get_switch_state() == sw_state_bot && !Serial) {}
-  breakout_set_led(BO_LED_1, false);
+  breakout_set_led(BO_LED_3, false);
 
   Serial.printf("Starting common boot phase...\n");
   
@@ -38,7 +39,7 @@ bool dl_common_boot(void switch_isr(void)) {
   if (!radio_init_sucess) {
     return false;
   }
-  breakout_set_led(BO_LED_2, false);
+  breakout_set_led(BO_LED_1, false);
 
   Serial.printf("Configuring switch, ensure it is in its middle position...\n");
   // Wait for switch to return to middle position
@@ -48,7 +49,7 @@ bool dl_common_boot(void switch_isr(void)) {
   attachInterrupt(digitalPinToInterrupt(BO_SWITCH_PIN2), switch_isr, CHANGE);
   Serial.printf("Switch configured!\n");
   
-  breakout_set_led(BO_LED_3, false);
+  breakout_set_led(BO_LED_2, false);
   Serial.printf("Finished common boot phase!\n");
   return true;
 }
