@@ -10,8 +10,7 @@
 
 static void ISR_switch_state_change(void);
 static void run_test_defs(void);
-static void handle_loop_mode_mid(void);
-static void handle_loop_mode_bot(void);
+static void send_heartbeats(void);
 
 lora_cfg_t g_testdef_cfg_a = {
   .freq = 868.0,
@@ -35,6 +34,7 @@ void setup() {
   g_testdef_a.cfg = g_testdef_cfg_a;
 
   Serial.printf("Booted as %s!\n", BOARD_TYPE);
+  breakout_set_led(BO_LED_3, true);
 }
 
 void loop() {
@@ -42,15 +42,11 @@ void loop() {
     case sw_state_top:
       run_test_defs();
       break;
-    case sw_state_mid:
-      handle_loop_mode_mid();
-      delay(100);
-      break;
     case sw_state_bot:
-      handle_loop_mode_bot();
-      delay(100);
+      send_heartbeats();
       break;
     default:
+      delay(100); // do nothing
       break;
   }
 }
@@ -65,13 +61,10 @@ static void ISR_switch_state_change(void) {
 
 static void run_test_defs(void) {
   Serial.printf("Running test defs...\n");
-  // Run Test Definitions
-  breakout_set_led(BO_LED_1, false);
-  breakout_set_led(BO_LED_2, false);
-  breakout_set_led(BO_LED_3, true);
-
   // Clear any set interrupt
   g_radio_a->set_interrupt(false);
+  // Reset to agreed base 
+  g_radio_a->reset_to_base_cfg();
 
   // Handshake to pass over test def
   bool recv_testdef = g_radio_a->send_testdef(&g_testdef_a);
@@ -82,19 +75,21 @@ static void run_test_defs(void) {
   while (breakout_get_switch_state() != sw_state_mid) {}
 }
 
-static void handle_loop_mode_mid(void) {
-  // Off State - Do Nothing
-  breakout_set_led(BO_LED_1, false);
-  breakout_set_led(BO_LED_2, true);
-  breakout_set_led(BO_LED_3, false);
-  delay(100);
-}
+static void send_heartbeats(void) {
+  // Clear any set interrupt
+  g_radio_a->set_interrupt(false);
+  // Reset to agreed base 
+  g_radio_a->reset_to_base_cfg();
+  // Start sending some acknowledged packets indefinitely
+  while (!g_radio_a->check_interrupt(false)) {
+    bool heartbeat_success = g_radio_a->send_heartbeat();
+    Serial.printf("Got Heartbeat ACK: %d\n", heartbeat_success);
+    breakout_set_led(heartbeat_success ? BO_LED_2 : BO_LED_1, true);
+    delay(500);
+    breakout_set_led(heartbeat_success ? BO_LED_2 : BO_LED_1, false);
+  }
 
-static void handle_loop_mode_bot(void) {
-  breakout_set_led(BO_LED_1, true);
-  breakout_set_led(BO_LED_2, false);
-  breakout_set_led(BO_LED_3, false);
-  delay(100);
+  while (breakout_get_switch_state() != sw_state_mid) {}
 }
 
 #endif

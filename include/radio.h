@@ -63,11 +63,21 @@ typedef enum radio_msg_type_t {
   msg_invalid = 0,  // Unconfigured message  
   msg_ack,          // General success acknowledgment
   msg_nack,         // General failure acknowledgment
-  msg_test_qry,     // Query if ready to handle a test
+  msg_test_qry,     // Query if ready to handle a testdef
   msg_test_rdy,     // Alert that ready to handle a test
   msg_test_testdef, // Packet contains test definition
   msg_test_packet,  // Test packet
+  msg_heartbeat,    // Heartbeat packet
 } radio_msg_type_t;
+
+/*
+  TODO
+*/
+typedef enum radio_cmd_t {
+  cmd_invalid = 0,  // Unconfigured message  
+  cmd_testdef,
+  cmd_heartbeat,
+} radio_cmd_t;
 
 /*
   Structure of our higher level packets, payload should directly
@@ -121,18 +131,23 @@ class LoRaModule {
     bool unacknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout = NO_TIMEOUT);
     
     bool send_testdef(lora_testdef_t *tx_testdef);
+
+    radio_cmd_t recv_command(uint8_t *master_id);
     bool recv_testdef(lora_testdef_t *recv_testdef);
 
     bool send_testdef_packets(lora_testdef_t *testdef);
     bool recv_testdef_packets(lora_testdef_t *testdef);
+
+    bool send_heartbeat(void);
+    void ack_heartbeat(uint8_t master_id);
 
     static bool is_low_datarate_required(lora_cfg_t *cfg);
     static uint32_t calculate_packet_airtime(lora_cfg_t *cfg, uint16_t packet_len);
 
     // Debug functions
     void dbg_print_cur_cfg(void);
-    void dbg_print_cfg(lora_cfg_t *cfg, bool title = true);
-    void dbg_print_testdef(lora_testdef_t *testdef);
+    static void dbg_print_cfg(lora_cfg_t *cfg, bool title = true);
+    static void dbg_print_testdef(lora_testdef_t *testdef);
 
     // Interrupt handling
     void set_interrupt(bool value);
