@@ -17,7 +17,8 @@ bool storage_master_defaults(void);
 bool storage_slave_defaults(void);
 
 bool storage_load_testdef(char* path, lora_testdef_t *testdef);
-
+File storage_init_result_file(char* filename);
+bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr);
 bool is_storage_initialised(void);
 
 extern SdFatSdio SD;
