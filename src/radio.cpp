@@ -3,6 +3,7 @@
 
 #include "radio.h"
 #include "breakout.h"
+#include "storage.h"
 
 #define SINGLE_RX_CHECK_TIMEOUT (500)
 #define RDY_RX_TIMEOUT (3000)
@@ -322,7 +323,10 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
   return true;
 }
 
-bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
+bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_packets) {
+  bool results_valid = true;
+  // 
+  File results_file = storage_init_result_file(testdef->id);
   // Use the mutually agreed configuration
   set_cfg(&testdef->cfg);
   uint16_t valid_packets = 0;
@@ -337,7 +341,8 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
   while ((time_left = timeout - (millis() - start_time)) > 0) {
     if (check_interrupt(false)) {
       Serial.printf("Interrupted when receiving packets!\n");
-      return false;
+      results_valid = false;
+      break;
     }
     _rx_buf.len = testdef->packet_len - RH_RF95_HEADER_LEN;
     bool got_packet = unacknowledged_rx(&_rx_buf, SINGLE_RX_CHECK_TIMEOUT);
@@ -354,7 +359,8 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
         valid_packets++;
         Serial.printf("Received packet: [ID: %d] [RSSI: %ddBm] [SNR: %ddB] [Packets: %d/%d]\n", 
             _rx_buf.p_hdr->id, rssi, snr, valid_packets, testdef->packet_cnt);
-        // TODO: Capture statistics
+        // Record to results file
+        storage_write_result(&results_file, _rx_buf.p_hdr->id, rssi, snr);
         // Got the last packet, may as well stop
         if (_rx_buf.p_hdr->id == (testdef->packet_cnt - 1)) {
           break;
@@ -364,7 +370,11 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef) {
     }
   }
   Serial.printf("Finished receiving [%d/%d] packets!\n", valid_packets, testdef->packet_cnt);
-  return true;
+  if (recv_packets != NULL) {
+    *recv_packets = valid_packets;
+  }
+  results_file.close();
+  return results_valid;
 }
 
 bool LoRaModule::send_heartbeat(void) {

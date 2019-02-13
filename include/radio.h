@@ -139,7 +139,7 @@ class LoRaModule {
     bool recv_testdef(lora_testdef_t *recv_testdef);
 
     bool send_testdef_packets(lora_testdef_t *testdef);
-    bool recv_testdef_packets(lora_testdef_t *testdef);
+    bool recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_packets = NULL);
 
     bool send_heartbeat(void);
     void ack_heartbeat(uint8_t master_id);
