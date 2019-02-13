@@ -7,17 +7,14 @@
 #include "radio.h"
 #include "storage.h"
 
-static void ISR_switch_state_change(void);
 static void recv_and_execute_cmd(void);
 
 void setup() {
-  dl_common_boot(ISR_switch_state_change);
-  
-  // Prepare the SD card for master logging
+  bool boot_success= dl_common_boot(dl_common_set_interrupts); 
+  // Prepare the SD card for slave logging, failure isn't critical
   storage_slave_defaults();
-
-  Serial.printf("Booted as %s!\n", BOARD_TYPE);
-  breakout_set_led(BO_LED_1, true);
+  // Report whether boot has successed, will block if boot_success is false
+  dl_common_finish_boot(boot_success);      
 }
 
 void loop() {
@@ -32,17 +29,10 @@ void loop() {
   delay(100);
 }
 
-/**
- * Set any relevent flags to indicate that the current functions should be
- * exited to allow for a change in device behaviour. 
- */
-static void ISR_switch_state_change(void) {
-  g_radio_a->set_interrupt(true);
-}
 
 static void recv_and_execute_cmd(void) {
-  // Clear any set interrupt
-  g_radio_a->set_interrupt(false);
+  // Clear all interrupts
+  dl_common_set_interrupts(false);
   // Reset to agreed base 
   g_radio_a->reset_to_base_cfg();
 
@@ -57,7 +47,7 @@ static void recv_and_execute_cmd(void) {
       lora_testdef_t testdef;
       testdef.master_id = master_id;
       bool recv_testdef = g_radio_a->recv_testdef(&testdef);
-      if (!recv_testdef || g_radio_a->check_interrupt()) {
+      if (!recv_testdef || dl_common_check_interrupts()) {
         return;
       }
       // Send packets based on testdef
