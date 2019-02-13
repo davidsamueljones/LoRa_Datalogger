@@ -102,6 +102,7 @@ bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr) {
 bool storage_load_testdef(File* file, lora_testdef_t *testdef) {
   // Get filename as test id
   extract_testdef_name(file, testdef->id); 
+  // Extract each field as if csv format with an extra ',' on the end
   for (uint8_t field=0; field < TESTDEF_FIELD_COUNT; field++) {
     String str = file->readStringUntil(',');
     switch (field) {
@@ -136,10 +137,11 @@ bool storage_load_testdef(File* file, lora_testdef_t *testdef) {
         testdef->cfg.crc = str.toInt() ? true : false;
         break;
       default:
-        // Shouldn't get here
-        break;
+        return false;
     }
   }
+  // TODO: Should probably do some form of validation
+  return true;
 }
 
 bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
@@ -149,13 +151,39 @@ bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
   return true;
 }
 
+uint8_t storage_load_testdefs(lora_testdef_t testdefs[], uint8_t arr_len) {
+  File dir = SD.open(TESTDEF_DIR, O_RDONLY);
+  File file;
+  uint8_t n = 0;
+  while (n < arr_len && file.openNext(&dir, O_RDONLY)) {
+    char buf[MAX_TESTDEF_FILELEN];
+    file.getName(buf, MAX_TESTDEF_FILELEN);
+    Serial.printf("* Found: %s", buf);
+        
+    if (!file.isSubDir() && !file.isHidden()) {
+      if (buf[0] == '_') {
+        Serial.printf(" [Ignored]\n");
+      } else {   
+        bool loaded = storage_load_testdef(&file, &testdefs[n]);
+        if (loaded) {
+          n++;
+        }
+        Serial.printf("%s\n", loaded ? "" : "[FAILED]");
+      }
+    }
+    file.close();
+  }
+  Serial.printf("%d testdefs loaded!\n", n);
+  return n;
+}
+
 bool is_storage_initialised(void) {
   return _initialised;
 }
 
 static void extract_testdef_name(File* file, char *testdef_id) {
   char rd_buf[MAX_TESTDEF_FILELEN];
-  bool got_filename = file->getName(rd_buf, MAX_TESTDEF_FILELEN);
+  file->getName(rd_buf, MAX_TESTDEF_FILELEN);
   // Get substring of filename to not include extension and not exceed max id length
   for (uint8_t i=0; i < MAX_TESTDEF_FILELEN; i++) {
     if (rd_buf[i] == '.' || rd_buf[i] == '\0' || i == TESTDEF_ID_LEN) {

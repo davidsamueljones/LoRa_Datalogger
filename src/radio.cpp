@@ -7,6 +7,7 @@
 
 #define SINGLE_RX_CHECK_TIMEOUT (500)
 #define RDY_RX_TIMEOUT (3000)
+#define HEARTBEAT_TIMEOUT (3000)
 #define TESTDEF_RX_TIMEOUT (5000)
 #define ACK_TIMEOUT (1000)
 
@@ -86,13 +87,12 @@ bool LoRaModule::acknowledged_tx(radio_msg_buffer_t *tx_buf, uint8_t attempts) {
   while (!sent && (attempts == 0 || attempt < attempts)) {
     attempt++;
     Serial.printf("* Attempt: %d\n", attempt);
-    if (check_interrupt(false)) {
+    if (check_interrupt()) {
       Serial.printf("Interrupted waiting for acknowledged TX!\n", tx_buf->len);
       break;
     }
     sent = _rf95_dg.sendtoWait(tx_buf->data, tx_buf->len, tx_buf->to);
   }
-  
   Serial.printf("TX %s!\n", sent ? "successful" : "failed");
   return sent;
 }
@@ -125,7 +125,7 @@ bool LoRaModule::acknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout) {
       received = _rf95_dg.recvfromAckTimeout(rx_buf->data, &rx_buf->len, 
                                       SINGLE_RX_CHECK_TIMEOUT, &rx_buf->from, &rx_buf->to);
       time += SINGLE_RX_CHECK_TIMEOUT;
-      if (check_interrupt(false)) {
+      if (check_interrupt()) {
         Serial.printf("Interrupted waiting for RX!\n");
         break;
       }
@@ -159,7 +159,7 @@ bool LoRaModule::unacknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout)
       received &=  ((rx_buf->to == RH_BROADCAST_ADDRESS) ||
                     (rx_buf->to == _rf95_dg.thisAddress()));
     }
-    if (check_interrupt(false)) {
+    if (check_interrupt()) {
       Serial.printf("Interrupted waiting for RX!\n");
       break;
     }
@@ -171,54 +171,13 @@ bool LoRaModule::unacknowledged_rx(radio_msg_buffer_t *rx_buf, uint16_t timeout)
   return received;
 }
 
-bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
-    // Send QRY? command and wait for someone to say RDY!
-    bool got_rdy = false;
-    while(!got_rdy) {
-      Serial.printf("Sending QRY? request to slaves...\n");
-      _tx_buf.to = RH_BROADCAST_ADDRESS;
-      _tx_buf.len = sizeof(radio_msg_t);
-      _tx_buf.p_hdr->type = msg_test_qry;
-      bool sent = unacknowledged_tx(&_tx_buf);
-      if (!sent || check_interrupt(false))
-        return false;
-      Serial.printf("Waiting for RDY! from a slave...\n");
-      _rx_buf.len = LEN_MSG_EMPTY;
-      got_rdy = acknowledged_rx(&_rx_buf, RDY_RX_TIMEOUT);
-      if (!got_rdy || check_interrupt(false))
-        return false;
-      // Verify received message is a RDY!
-      got_rdy = (_rx_buf.p_hdr->type == msg_test_rdy);
-      got_rdy &= _rx_buf.from != RH_BROADCAST_ADDRESS;
-      got_rdy &= _rx_buf.to == _rf95_dg.thisAddress();
-      Serial.printf("Received message is%s a RDY!\n", got_rdy ? "" : " not");
-    }
-    // Track the members of the exchange
-    tx_testdef->master_id = _rf95_dg.thisAddress();
-    tx_testdef->slave_id = _rx_buf.from;
-
-    // Send Test Definition
-    Serial.printf("Sending test definition to slave...\n");
-    _tx_buf.to = tx_testdef->slave_id;
-    _tx_buf.len = LEN_MSG_TESTDEF;
-    _tx_buf.p_hdr->type = msg_test_testdef;
-    memcpy(&_tx_buf.data[MSG_PAYLOAD_START], tx_testdef, sizeof(lora_testdef_t));
-    dbg_print_testdef((lora_testdef_t*) &_tx_buf.data[MSG_PAYLOAD_START]);
-    bool acked_testdef = acknowledged_tx(&_tx_buf, 3);
-    if (!acked_testdef || check_interrupt(false))
-      return false;  
-    Serial.printf("Testdef delivered successfully!\n");
-
-    return true;
-}
-
 radio_cmd_t LoRaModule::recv_command(uint8_t *master_id) {
   Serial.printf("Waiting for a command from master...\n");
   bool got_cmd = false;
   while (!got_cmd) {
     _rx_buf.len = LEN_MSG_EMPTY;
     got_cmd = unacknowledged_rx(&_rx_buf);
-    if (check_interrupt(false)) {
+    if (check_interrupt()) {
       break;
     }
     // Can't do much if we don't know who to reply to
@@ -243,6 +202,47 @@ radio_cmd_t LoRaModule::recv_command(uint8_t *master_id) {
   return cmd_invalid;
 }
 
+bool LoRaModule::send_testdef(lora_testdef_t *tx_testdef) {
+    // Send QRY? command and wait for someone to say RDY!
+    bool got_rdy = false;
+    while(!got_rdy) {
+      Serial.printf("Sending QRY? request to slaves...\n");
+      _tx_buf.to = RH_BROADCAST_ADDRESS;
+      _tx_buf.len = sizeof(radio_msg_t);
+      _tx_buf.p_hdr->type = msg_test_qry;
+      bool sent = unacknowledged_tx(&_tx_buf);
+      if (!sent || check_interrupt())
+        return false;
+      Serial.printf("Waiting for RDY! from a slave...\n");
+      _rx_buf.len = LEN_MSG_EMPTY;
+      got_rdy = acknowledged_rx(&_rx_buf, RDY_RX_TIMEOUT);
+      if (!got_rdy || check_interrupt())
+        return false;
+      // Verify received message is a RDY!
+      got_rdy = (_rx_buf.p_hdr->type == msg_test_rdy);
+      got_rdy &= _rx_buf.from != RH_BROADCAST_ADDRESS;
+      got_rdy &= _rx_buf.to == _rf95_dg.thisAddress();
+      Serial.printf("Received message is%s a RDY!\n", got_rdy ? "" : " not");
+    }
+    // Track the members of the exchange
+    tx_testdef->master_id = _rf95_dg.thisAddress();
+    tx_testdef->slave_id = _rx_buf.from;
+
+    // Send Test Definition
+    Serial.printf("Sending test definition to slave...\n");
+    _tx_buf.to = tx_testdef->slave_id;
+    _tx_buf.len = LEN_MSG_TESTDEF;
+    _tx_buf.p_hdr->type = msg_test_testdef;
+    memcpy(&_tx_buf.data[MSG_PAYLOAD_START], tx_testdef, sizeof(lora_testdef_t));
+    dbg_print_testdef((lora_testdef_t*) &_tx_buf.data[MSG_PAYLOAD_START]);
+    bool acked_testdef = acknowledged_tx(&_tx_buf, 3);
+    if (!acked_testdef || check_interrupt())
+      return false;  
+    Serial.printf("Testdef delivered successfully!\n");
+
+    return true;
+}
+
 bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   // Respond to master with a RDY!
   _tx_buf.to = rx_testdef->master_id;
@@ -250,7 +250,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   _tx_buf.p_hdr->type = msg_test_rdy;
   Serial.printf("Responding with RDY! to master...\n");
   bool acked_rdy = acknowledged_tx(&_tx_buf, 3);
-  if (!acked_rdy || check_interrupt(false))
+  if (!acked_rdy || check_interrupt())
     return false;
   Serial.printf("Got acknowledgment to RDY!\n");
 
@@ -261,7 +261,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
     // Give up if we haven't received any message within a timeout of the last
     _rx_buf.len = LEN_MSG_TESTDEF;
     got_testdef = acknowledged_rx(&_rx_buf, TESTDEF_RX_TIMEOUT);
-    if (!got_testdef || check_interrupt(false))
+    if (!got_testdef || check_interrupt())
       return false;
     // Verify received message is a test definition
     got_testdef &= _rx_buf.p_hdr->type == msg_test_testdef;
@@ -306,7 +306,7 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
   uint16_t packet = 0;
   uint32_t start_time = millis();
   while (packet < testdef->packet_cnt) {
-    if (check_interrupt(false)) {
+    if (check_interrupt()) {
       Serial.printf("Interrupted when sending packets!\n", packet);
       return false;
     }
@@ -339,7 +339,7 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_pa
   uint32_t start_time = millis();
   int32_t time_left = 0;
   while ((time_left = timeout - (millis() - start_time)) > 0) {
-    if (check_interrupt(false)) {
+    if (check_interrupt()) {
       Serial.printf("Interrupted when receiving packets!\n");
       results_valid = false;
       break;
@@ -382,13 +382,13 @@ bool LoRaModule::send_heartbeat(void) {
   _tx_buf.len = LEN_MSG_EMPTY;
   _tx_buf.p_hdr->type = msg_heartbeat;
   bool sent = unacknowledged_tx(&_tx_buf);
-  if (!sent || check_interrupt(false)) {
+  if (!sent || check_interrupt()) {
     return false;
   }
   bool recv_ack = false;
-  uint32_t end_time = millis() + 3000;
+  uint32_t end_time = millis() + HEARTBEAT_TIMEOUT;
   while (!recv_ack && millis() < end_time) {
-    recv_ack = unacknowledged_rx(&_rx_buf, 3000);
+    recv_ack = unacknowledged_rx(&_rx_buf, HEARTBEAT_TIMEOUT);
     recv_ack &= _rx_buf.to == _rf95_dg.thisAddress();
     recv_ack &= _rx_buf.p_hdr->type == msg_ack;
   }

@@ -8,38 +8,18 @@
 #include "radio.h"
 #include "storage.h"
 
-static void ISR_switch_state_change(void);
 static void run_testdefs(void);
 static uint16_t run_testdef(lora_testdef_t *testdef);
 static void send_heartbeats(void);
 
-lora_cfg_t g_testdef_cfg_a = {
-  .freq = 868.0,
-  .sf = 7,
-  .tx_dbm = 14,
-  .bw = 125000,
-  .cr4_denom = 5,
-  .preamble_syms = 8,
-  .crc = true,
-};
-
-lora_testdef_t g_testdef_a;
+#define MAX_TESTDEFS (100)
 
 void setup() {
-  dl_common_boot(ISR_switch_state_change);
-
-  // Prepare the SD card for master logging
+  bool boot_success = dl_common_boot(dl_common_set_interrupts);
+  // Prepare the SD card for master logging, failure isn't critical
   storage_master_defaults();
-
-  // Define an inbuilt test definition
-  strcpy(g_testdef_a.id, "Test_A");
-  g_testdef_a.exp_range = 255;
-  g_testdef_a.packet_cnt = 10;
-  g_testdef_a.packet_len = 255;
-  g_testdef_a.cfg = g_testdef_cfg_a;
-
-  Serial.printf("Booted as %s!\n", BOARD_TYPE);
-  breakout_set_led(BO_LED_3, true);
+  // Report whether boot has successed, will block if boot_success is false
+  dl_common_finish_boot(boot_success);                           
 }
 
 void loop() {
@@ -47,6 +27,10 @@ void loop() {
     case sw_state_top:
       run_testdefs();
       break;
+    case sw_state_mid:
+      breakout_set_led(BO_LED_1, false);
+      breakout_set_led(BO_LED_2, false);
+      delay(100); // do nothing
     case sw_state_bot:
       send_heartbeats();
       break;
@@ -56,63 +40,47 @@ void loop() {
   }
 }
 
-/**
- * Set any relevent flags to indicate that the current functions should be
- * exited to allow for a change in device behaviour. 
- */
-static void ISR_switch_state_change(void) {
-  g_radio_a->set_interrupt(true);
-}
-
+// If the SD card is available, run all test definitions in the testdef folder.
 static void run_testdefs(void) {
-  // Clear any set interrupt
-  g_radio_a->set_interrupt(false);
-
-  // Go to the root directory
-  SD.chdir(true);
+  // Clear all interrupts
+  dl_common_set_interrupts(false);
   
-    // Create results folder with current datetime
-  char test_results_path[30];
+  if (!is_storage_initialised()) {
+    Serial.printf("Storage is not initialised, cannot execute testdefs!\n");
+    while (!dl_common_check_interrupts()) {
+      delay(100);
+    }
+    return;
+  }
+
+  // Create results folder with current datetime
+  SD.chdir(true);
+  char test_results_path[64];
   sprintf(test_results_path, "%s%04d-%02d-%02d-%02dh%02dm%02ds/", RESULTS_DIR,
           year(), month(), day(), hour(), minute(), second());
   SD.mkdir(test_results_path);
 
-  // Load in all the testdefs (TODO: Don't really want to load all in at once)
+  // Load in all the testdefs 
+  // TODO: Don't really want to load all in at once but needed at the moment for ordering
+  //       and would rather not load multiple times.
   Serial.printf("Loading all testdefs in testdef folder...\n");
-  lora_testdef_t testdefs[20];
-  bool completed[20] = {false};
-  File dir = SD.open(TESTDEF_DIR, O_RDONLY);
-  File dirFile;
-  uint8_t n = 0;
-  uint8_t nMax = 20;
-  while (n < nMax && dirFile.openNext(&dir, O_RDONLY)) {
-    char buf[30];
-    dirFile.getName(buf, 30);
-    Serial.printf("* Found: %s", buf);
-    if (dirFile.isSubDir() || dirFile.isHidden() || buf[0] == '_') {
-      Serial.printf(" [Ignored]\n");
-    } else {
-      Serial.printf("\n");
-      storage_load_testdef(&dirFile, &testdefs[n]);
-      n++;
-    }
-    dirFile.close();
-  }
-  Serial.printf("%d testdefs loaded!\n", n);
+  lora_testdef_t testdefs[MAX_TESTDEFS];
+  bool completed[MAX_TESTDEFS] = {false};
+  uint8_t testdef_cnt = storage_load_testdefs(testdefs, MAX_TESTDEFS);
 
   // Enter results directory so logs end up there
   SD.chdir(test_results_path, true);
   
   // Start running all testdefs in reverse order of expected range
   // If no packets are received at a certain level do not carry out the further testdefs
-  uint8_t last_exp_range = 0;
+  lora_testdef_t *last_testdef = NULL;
   uint16_t last_recv_packets = UINT16_MAX;
   Serial.printf("Executing testdefs...\n");
-  while (!g_radio_a->check_interrupt(false)) {
+  while (!dl_common_check_interrupts()) {
     bool all_completed = true;
     uint8_t max_exp_range = 0;
     uint8_t selected = 0;
-    for (uint8_t i=0; i < n; i++) {
+    for (uint8_t i=0; i < testdef_cnt; i++) {
       if (!completed[i]) {
         all_completed = false;
         if (testdefs[i].exp_range > max_exp_range) {
@@ -121,21 +89,31 @@ static void run_testdefs(void) {
         }
       }
     }
-    if (last_recv_packets == 0 && max_exp_range < last_exp_range) {
-      Serial.printf("Giving up, got no packets from testdef with highest expected range!\n");
-      break;
-    }
     if (all_completed) {
       Serial.printf("All testdefs executed!\n");
       break;
     }
+    if (last_testdef != NULL && last_recv_packets == 0 
+              && max_exp_range < last_testdef->exp_range) {
+      Serial.printf("Giving up, got no packets from testdef with highest expected range!\n");
+      break;
+    }
+    // Clear any status LEDs
+    breakout_set_led(BO_LED_1, false);
+    breakout_set_led(BO_LED_2, false);
+
     // Run test definition
     lora_testdef_t *testdef = &testdefs[selected];
+    Serial.printf("Executing testdef...\n");
     g_radio_a->dbg_print_testdef(testdef);
     last_recv_packets = run_testdef(testdef);  
     completed[selected] = true;
-    last_exp_range = testdef->exp_range;
+    last_testdef = testdef;
   }
+
+  // All LEDs set to indicate finished
+  breakout_set_led(BO_LED_1, true);
+  breakout_set_led(BO_LED_2, true);
 
   // Be careful not to just infinitely run tests
   if (breakout_get_switch_state() != sw_state_mid) {
@@ -147,35 +125,42 @@ static void run_testdefs(void) {
 static uint16_t run_testdef(lora_testdef_t *testdef) {
   uint16_t recv_packets = 0;
 
-  // Clear any set interrupt
-  g_radio_a->set_interrupt(false);
+  // Clear all interrupts
+  dl_common_set_interrupts(false);
   // Reset to agreed base 
   g_radio_a->reset_to_base_cfg();
   // Handshake to pass over test def
   bool delivered_testdef = false;
-  while (!delivered_testdef && !g_radio_a->check_interrupt(false)) {
+  while (!delivered_testdef && !dl_common_check_interrupts()) {
+    breakout_set_led(BO_LED_1, false);
+    breakout_set_led(BO_LED_2, false);
     delivered_testdef = g_radio_a->send_testdef(testdef);
+    breakout_set_led(delivered_testdef ? BO_LED_2 : BO_LED_1, true);
+    if (!delivered_testdef) {
+      delay(500);
+    }
   }
   if (delivered_testdef) {
     g_radio_a->recv_testdef_packets(testdef, &recv_packets);
+    breakout_set_led(BO_LED_1, true);
   }
   return recv_packets;
 }
 
 static void send_heartbeats(void) {
-  // Clear any set interrupt
-  g_radio_a->set_interrupt(false);
+  // Clear all interrupts
+  dl_common_set_interrupts(false);
   // Reset to agreed base 
   g_radio_a->reset_to_base_cfg();
   // Start sending some acknowledged packets indefinitely
-  while (!g_radio_a->check_interrupt(false)) {
+  while (!dl_common_check_interrupts()) {
     bool heartbeat_success = g_radio_a->send_heartbeat();
     Serial.printf("Got Heartbeat ACK: %d\n", heartbeat_success);
     breakout_set_led(heartbeat_success ? BO_LED_2 : BO_LED_1, true);
     delay(500);
     breakout_set_led(heartbeat_success ? BO_LED_2 : BO_LED_1, false);
   }
-
+  // Just a safety check to ensure switch doesn't skip mid
   while (breakout_get_switch_state() != sw_state_mid) {}
 }
 

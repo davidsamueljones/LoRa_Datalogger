@@ -6,7 +6,7 @@
 #include "radio.h"
 #include "storage.h"
 
-static void print_date_time(void);
+static volatile bool _interrupted = false;
 
 bool dl_common_boot(void switch_isr(void)) {
   // Initialise breakout board
@@ -28,7 +28,8 @@ bool dl_common_boot(void switch_isr(void)) {
   // RTC configuration occurs during breakout board initialisation
   Serial.printf("RTC sync %s!\n", timeStatus() == timeSet ? "successful" : "failed");
   Serial.printf("Current [Date] Time: ");
-  print_date_time();
+  Serial.printf("[%04d-%02d-%02d] %02d:%02d:%02d\n", 
+      year(), month(), day(), hour(), minute(), second());
 
   // Initialise radio, keep track using global instance
   lora_module_t lora_module = {BOARD_ID, RFM95_CS, RFM95_RST, RFM95_INT};
@@ -41,7 +42,8 @@ bool dl_common_boot(void switch_isr(void)) {
   }
   breakout_set_led(BO_LED_1, false);
 
-  // Initialise the SD card
+  // Initialise the SD card, failure is not necessarily a boot failure,
+  // let higher levels check for initialisation to determine severity of failure.
   bool storage_init_success = storage_init();
   Serial.printf("SD card initialisation %s!\n", storage_init_success ? "successful" : "failed");
 
@@ -58,7 +60,36 @@ bool dl_common_boot(void switch_isr(void)) {
   return true;
 }
 
-static void print_date_time(void) {
-  Serial.printf("[%04d-%02d-%02d] %02d:%02d:%02d\n", 
-      year(), month(), day(), hour(), minute(), second());
+void dl_common_finish_boot(bool boot_success) {
+  if (!boot_success) {
+    Serial.printf("Boot as %s failed!\n", BOARD_TYPE); 
+    Serial.printf("Check errors and reset device!\n"); 
+    
+    bool failure_led_on = false;
+    while (true) {
+      failure_led_on = !failure_led_on;
+      breakout_set_led(BO_LED_2, failure_led_on);
+      delay(1000);
+    }
+  } else {
+    Serial.printf("Booted as %s successfully!\n", BOARD_TYPE); 
+  }           
 }
+
+void dl_common_set_interrupts(void) {
+  dl_common_set_interrupts(true);
+}
+
+void dl_common_set_interrupts(bool value) {
+  g_radio_a->set_interrupt(value);
+  _interrupted = value;
+}
+
+bool dl_common_check_interrupts(bool clear) {
+  bool temp = _interrupted; 
+  if (clear) {
+    dl_common_set_interrupts(false);
+  }
+  return temp;
+}
+

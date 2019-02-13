@@ -74,7 +74,7 @@ typedef enum radio_msg_type_t {
 } radio_msg_type_t;
 
 /*
-  TODO
+  Commands that can be used to trigger certain radio behaviour. 
 */
 typedef enum radio_cmd_t {
   cmd_invalid = 0,  // Unconfigured message  
@@ -154,7 +154,7 @@ class LoRaModule {
 
     // Interrupt handling
     void set_interrupt(bool value);
-    bool check_interrupt(bool clear = true);
+    bool check_interrupt(bool clear = false);
 
     // Low level radio interface
     RH_RF95 _rf95;
