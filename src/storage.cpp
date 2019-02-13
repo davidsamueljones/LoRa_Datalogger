@@ -99,10 +99,9 @@ bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr) {
   return file->write(buf) ? true : false;
 }
 
-bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
-  File file = SD.open(path, O_READ);
+bool storage_load_testdef(File* file, lora_testdef_t *testdef) {
   char buf[20];
-  bool got_filename = file.getName(buf, 20);
+  bool got_filename = file->getName(buf, 20);
   for (uint8_t i=0; i < 20; i++) {
     if (buf[i] == '.' || buf[i] == '\0') {
       testdef->id[i] = '\0';
@@ -113,7 +112,7 @@ bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
   
   //Serial.printf("Got Filename: %d : %s\n", got_filename, buf);
   for (uint8_t field=0; field < TESTDEF_FIELD_COUNT; field++) {
-    String str = file.readStringUntil(',');
+    String str = file->readStringUntil(',');
     str.toCharArray(buf, 20);
     //Serial.printf("Field %d: %s\n", field, buf);
     switch (field) {
@@ -152,6 +151,11 @@ bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
         break;
     }
   }
+}
+
+bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
+  File file = SD.open(path, O_READ);
+  storage_load_testdef(&file, testdef);
   file.close();
   return true;
 }
