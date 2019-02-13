@@ -2,13 +2,19 @@
 
 #include "storage.h"
 
+static void extract_testdef_name(File* file, char *testdef_id);
 static void get_fat_date_time(uint16_t *date, uint16_t* time);
 
-SdFatSdio SD;
-
+#define MAX_TESTDEF_FILELEN (48)
 static const char *TESTDEF_FIELDS[] = {"exp_range", "packet_cnt", "packet_len", "freq", "sf", "tx_dbm",
                                        "bw", "cr4_denom", "preamble_syms", "crc"};
 #define TESTDEF_FIELD_COUNT (uint8_t) (sizeof(TESTDEF_FIELDS) / sizeof(TESTDEF_FIELDS[1]))
+
+static const char *RECV_PACKETS_FIELDS[] = {"id", "rssi", "snr"};            
+#define RECV_PACKETS_FIELD_COUNT (uint8_t) (sizeof(RECV_PACKETS_FIELDS) / sizeof(RECV_PACKETS_FIELDS[1]))   
+
+SdFatSdio SD;
+static bool _initialised;
 
 typedef enum testdef_field_t {
   FIELD_EXP_RANGE = 0,
@@ -22,11 +28,6 @@ typedef enum testdef_field_t {
   FIELD_PREAMBLE_SYMS,
   FIELD_CRC,
 } testdef_field_t;
-
-static const char *RECV_PACKETS_FIELDS[] = {"id", "rssi", "snr"};            
-#define RECV_PACKETS_FIELD_COUNT (uint8_t) (sizeof(RECV_PACKETS_FIELDS) / sizeof(RECV_PACKETS_FIELDS[1]))                          
-
-static bool _initialised;
 
 bool storage_init(void) {
   if (_initialised) {
@@ -71,7 +72,6 @@ bool storage_master_defaults(void) {
   return true;
 }
 
-
 bool storage_slave_defaults(void) {
   if (!_initialised) {
     return false;
@@ -80,7 +80,7 @@ bool storage_slave_defaults(void) {
 }
 
 File storage_init_result_file(char* filename) {
-    char buf[30];
+    char buf[TESTDEF_ID_LEN + 5];
     sprintf(buf, "%s.csv", filename);
     Serial.printf("Making results file...\n");
     File file = SD.open(buf, FILE_WRITE);
@@ -94,27 +94,16 @@ File storage_init_result_file(char* filename) {
 }
 
 bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr) {
-  char buf[30];
-  sprintf(buf, "\n%d,%d,%d", id, rssi, snr);
-  return file->write(buf) ? true : false;
+  char wr_buf[30];
+  sprintf(wr_buf, "\n%d,%d,%d", id, rssi, snr);
+  return file->write(wr_buf) ? true : false;
 }
 
 bool storage_load_testdef(File* file, lora_testdef_t *testdef) {
-  char buf[20];
-  bool got_filename = file->getName(buf, 20);
-  for (uint8_t i=0; i < 20; i++) {
-    if (buf[i] == '.' || buf[i] == '\0') {
-      testdef->id[i] = '\0';
-      break;
-    }
-    testdef->id[i] = buf[i];
-  }
-  
-  //Serial.printf("Got Filename: %d : %s\n", got_filename, buf);
+  // Get filename as test id
+  extract_testdef_name(file, testdef->id); 
   for (uint8_t field=0; field < TESTDEF_FIELD_COUNT; field++) {
     String str = file->readStringUntil(',');
-    str.toCharArray(buf, 20);
-    //Serial.printf("Field %d: %s\n", field, buf);
     switch (field) {
       case FIELD_EXP_RANGE:
         testdef->exp_range = str.toInt();
@@ -162,6 +151,19 @@ bool storage_load_testdef(char* path, lora_testdef_t *testdef) {
 
 bool is_storage_initialised(void) {
   return _initialised;
+}
+
+static void extract_testdef_name(File* file, char *testdef_id) {
+  char rd_buf[MAX_TESTDEF_FILELEN];
+  bool got_filename = file->getName(rd_buf, MAX_TESTDEF_FILELEN);
+  // Get substring of filename to not include extension and not exceed max id length
+  for (uint8_t i=0; i < MAX_TESTDEF_FILELEN; i++) {
+    if (rd_buf[i] == '.' || rd_buf[i] == '\0' || i == TESTDEF_ID_LEN) {
+      testdef_id[i] = '\0';
+      break;
+    }
+    testdef_id[i] = rd_buf[i];
+  }
 }
 
 static void get_fat_date_time(uint16_t* date, uint16_t* time) {

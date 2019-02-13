@@ -11,6 +11,8 @@
 #define TESTDEF_FORMAT_FILE TESTDEF_DIR "_format.txt"
 #define LOG_FILE "log.txt"
 
+extern SdFatSdio SD;
+
 bool storage_init(void);
 
 bool storage_master_defaults(void);
@@ -22,7 +24,5 @@ bool storage_load_testdef(char* path, lora_testdef_t *testdef);
 File storage_init_result_file(char* filename);
 bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr);
 bool is_storage_initialised(void);
-
-extern SdFatSdio SD;
 
 #endif // STORAGE_H
