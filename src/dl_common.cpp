@@ -4,6 +4,7 @@
 #include "dl_common.h"
 #include "breakout.h"
 #include "radio.h"
+#include "storage.h"
 
 static void print_date_time(void);
 
@@ -13,7 +14,6 @@ bool dl_common_boot(void switch_isr(void)) {
   breakout_set_led(BO_LED_3, true); // Waiting for serial
   breakout_set_led(BO_LED_1, true); // Waiting for radio
   breakout_set_led(BO_LED_2, true); // Waiting for rest of boot
-
 
   // Initialise serial connectivity
   Serial.begin(115200);
@@ -40,6 +40,10 @@ bool dl_common_boot(void switch_isr(void)) {
     return false;
   }
   breakout_set_led(BO_LED_1, false);
+
+  // Initialise the SD card
+  bool storage_init_success = storage_init();
+  Serial.printf("SD card initialisation %s!\n", storage_init_success ? "successful" : "failed");
 
   Serial.printf("Configuring switch, ensure it is in its middle position...\n");
   // Wait for switch to return to middle position

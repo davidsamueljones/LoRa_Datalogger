@@ -5,12 +5,17 @@
 #include "dl_common.h"
 #include "breakout.h"
 #include "radio.h"
+#include "storage.h"
 
 static void ISR_switch_state_change(void);
 static void recv_and_execute_cmd(void);
 
 void setup() {
   dl_common_boot(ISR_switch_state_change);
+  
+  // Prepare the SD card for master logging
+  storage_slave_defaults();
+
   Serial.printf("Booted as %s!\n", BOARD_TYPE);
   breakout_set_led(BO_LED_1, true);
 }
