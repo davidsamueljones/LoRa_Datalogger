@@ -31,6 +31,7 @@ void loop() {
       breakout_set_led(BO_LED_1, false);
       breakout_set_led(BO_LED_2, false);
       delay(100); // do nothing
+      break;
     case sw_state_bot:
       send_heartbeats();
       break;
