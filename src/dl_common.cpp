@@ -61,6 +61,7 @@ bool dl_common_boot(void switch_isr(void)) {
 }
 
 void dl_common_finish_boot(bool boot_success) {
+  breakout_set_led(BOARD_TYPE_LED, true);
   if (!boot_success) {
     Serial.printf("Boot as %s failed!\n", BOARD_TYPE); 
     Serial.printf("Check errors and reset device!\n"); 

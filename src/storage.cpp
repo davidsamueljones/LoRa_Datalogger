@@ -158,9 +158,8 @@ uint8_t storage_load_testdefs(lora_testdef_t testdefs[], uint8_t arr_len) {
   while (n < arr_len && file.openNext(&dir, O_RDONLY)) {
     char buf[MAX_TESTDEF_FILELEN];
     file.getName(buf, MAX_TESTDEF_FILELEN);
-    Serial.printf("* Found: %s", buf);
-        
     if (!file.isSubDir() && !file.isHidden()) {
+      Serial.printf("* Found: %s", buf);
       if (buf[0] == '_') {
         Serial.printf(" [Ignored]\n");
       } else {   

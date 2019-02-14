@@ -26,7 +26,6 @@ void loop() {
       delay(100); // do nothing
       break;
   }
-  delay(100);
 }
 
 
