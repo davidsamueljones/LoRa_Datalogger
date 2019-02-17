@@ -28,8 +28,7 @@ bool dl_common_boot(void switch_isr(void)) {
   // RTC configuration occurs during breakout board initialisation
   Serial.printf("RTC sync %s!\n", timeStatus() == timeSet ? "successful" : "failed");
   Serial.printf("Current [Date] Time: ");
-  Serial.printf("[%04d-%02d-%02d] %02d:%02d:%02d\n", 
-      year(), month(), day(), hour(), minute(), second());
+  Serial.printf(DATETIME_PRINT_FORMAT "\n", DATETIME_PRINT_ARGS);
 
   // Initialise radio, keep track using global instance
   lora_module_t lora_module = {BOARD_ID, RFM95_CS, RFM95_RST, RFM95_INT};

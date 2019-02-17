@@ -323,9 +323,8 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
   return true;
 }
 
-bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_packets) {
+bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_packets, File* log_file) {
   bool results_valid = true;
-  // 
   File results_file = storage_init_result_file(testdef->id);
   // Use the mutually agreed configuration
   set_cfg(&testdef->cfg);
@@ -335,17 +334,35 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_pa
   uint32_t packet_airtime = calculate_packet_airtime(&testdef->cfg, testdef->packet_len);
   uint32_t packet_timeout = packet_airtime * AIRTIME_MULTIPLIER;
   uint32_t timeout = packet_timeout * (testdef->packet_cnt+1) + SLAVE_PACKET_SEND_DELAY;
-  Serial.printf("Waiting for packets for %dms...\n", timeout);
+  SERIAL_AND_LOG((*log_file), "Waiting for packets for %dms...\n", timeout);
+  
+  // Keep track of the number of bad receives
+  uint16_t rx_bad_last = _rf95.rxBad();
+  uint16_t rx_bad_since = 0;
+  uint32_t rx_bad_total = 0;
+
   uint32_t start_time = millis();
   int32_t time_left = 0;
   while ((time_left = timeout - (millis() - start_time)) > 0) {
     if (check_interrupt()) {
-      Serial.printf("Interrupted when receiving packets!\n");
+      SERIAL_AND_LOG((*log_file), "Interrupted when receiving packets!\n");
       results_valid = false;
       break;
     }
     _rx_buf.len = testdef->packet_len - RH_RF95_HEADER_LEN;
     bool got_packet = unacknowledged_rx(&_rx_buf, SINGLE_RX_CHECK_TIMEOUT);
+    
+    // Check if we have any bad receives
+    uint16_t rx_bad = _rf95.rxBad();
+    // Find how many have occurred since last check
+    rx_bad_since = rx_bad;
+    if (rx_bad < rx_bad_last) {
+      rx_bad_since += UINT16_MAX;
+    }
+    rx_bad_since -= rx_bad_last;
+    rx_bad_last = rx_bad;
+    rx_bad_total += rx_bad_since;
+
     if (got_packet) {
       // Verify received message is a test packet, contents should be
       // pre-verified by crc check so only valid packets should reach this stage
@@ -353,14 +370,15 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_pa
       got_packet &= _rx_buf.from == testdef->slave_id;
       got_packet &= _rx_buf.to == testdef->master_id;
       got_packet &= (_rx_buf.len + RH_RF95_HEADER_LEN) == testdef->packet_len;
+
       if (got_packet) {
+        valid_packets++;
         int16_t rssi = _rf95.lastRssi();
         int16_t snr = _rf95.lastSNR();
-        valid_packets++;
-        Serial.printf("Received packet: [ID: %d] [RSSI: %ddBm] [SNR: %ddB] [Packets: %d/%d]\n", 
-            _rx_buf.p_hdr->id, rssi, snr, valid_packets, testdef->packet_cnt);
+        Serial.printf("Received packet: [ID: %d] [RSSI: %ddBm] [SNR: %ddB] [Packets: %d/%d] [Bad Recvs: %d]\n", 
+            _rx_buf.p_hdr->id, rssi, snr, valid_packets, testdef->packet_cnt, rx_bad_since);
         // Record to results file
-        storage_write_result(&results_file, _rx_buf.p_hdr->id, rssi, snr);
+        storage_write_result(&results_file, _rx_buf.p_hdr->id, rssi, snr, rx_bad_since);
         // Got the last packet, may as well stop
         if (_rx_buf.p_hdr->id == (testdef->packet_cnt - 1)) {
           break;
@@ -369,7 +387,8 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_pa
       }
     }
   }
-  Serial.printf("Finished receiving [%d/%d] packets!\n", valid_packets, testdef->packet_cnt);
+  SERIAL_AND_LOG((*log_file), "Finished receiving [%d/%d] packets!\n", valid_packets, testdef->packet_cnt);
+  SERIAL_AND_LOG((*log_file), "In this time %d failed receives occurred!\n", rx_bad_total);
   if (recv_packets != NULL) {
     *recv_packets = valid_packets;
   }

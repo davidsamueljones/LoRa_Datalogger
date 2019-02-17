@@ -9,7 +9,7 @@
 #include "storage.h"
 
 static void run_testdefs(void);
-static uint16_t run_testdef(lora_testdef_t *testdef);
+static bool run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* log_file);
 static void send_heartbeats(void);
 
 #define MAX_TESTDEFS (100)
@@ -71,7 +71,8 @@ static void run_testdefs(void) {
 
   // Enter results directory so logs end up there
   SD.chdir(test_results_path, true);
-  
+  File log_file = storage_init_test_log();
+
   // Start running all testdefs in reverse order of expected range
   // If no packets are received at a certain level do not carry out the further testdefs
   lora_testdef_t *last_testdef = NULL;
@@ -90,13 +91,14 @@ static void run_testdefs(void) {
         }
       }
     }
+
     if (all_completed) {
-      Serial.printf("All testdefs executed!\n");
+      SERIAL_AND_LOG(log_file, "All testdefs excuted!\n")
       break;
     }
     if (last_testdef != NULL && last_recv_packets == 0 
               && max_exp_range < last_testdef->exp_range) {
-      Serial.printf("Giving up, got no packets from testdef with highest expected range!\n");
+      SERIAL_AND_LOG(log_file, "Giving up, got no packets from testdef with highest expected range!\n")
       break;
     }
     // Clear any status LEDs
@@ -105,27 +107,31 @@ static void run_testdefs(void) {
 
     // Run test definition
     lora_testdef_t *testdef = &testdefs[selected];
-    Serial.printf("Executing testdef...\n");
+    SERIAL_AND_LOG(log_file, "\nExecuting testdef: '%s'\n", testdef->id);
+    SERIAL_AND_LOG(log_file, "Start Time: " DATETIME_PRINT_FORMAT "\n", DATETIME_PRINT_ARGS);
+    log_file.flush();
     g_radio_a->dbg_print_testdef(testdef);
-    last_recv_packets = run_testdef(testdef);  
-    completed[selected] = true;
+    bool valid_results = run_testdef(testdef, &last_recv_packets, &log_file);  
+    completed[selected] = valid_results;
     last_testdef = testdef;
+    SERIAL_AND_LOG(log_file, "Testdef results: %s\n", valid_results ? "Valid" : "Invalid");
+    SERIAL_AND_LOG(log_file, "End Time: " DATETIME_PRINT_FORMAT "\n", DATETIME_PRINT_ARGS);
+    log_file.flush();
   }
 
   // All LEDs set to indicate finished
   breakout_set_led(BO_LED_1, true);
   breakout_set_led(BO_LED_2, true);
+  log_file.close();
 
   // Be careful not to just infinitely run tests
   if (breakout_get_switch_state() != sw_state_mid) {
-  Serial.printf("Return switch to middle to run tests again...\n");
+    Serial.printf("\nReturn switch to middle to run tests again...\n");
   }
   while (breakout_get_switch_state() != sw_state_mid) {}
 }
 
-static uint16_t run_testdef(lora_testdef_t *testdef) {
-  uint16_t recv_packets = 0;
-
+static bool run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* log_file) {
   // Clear all interrupts
   dl_common_set_interrupts(false);
   // Reset to agreed base 
@@ -141,11 +147,12 @@ static uint16_t run_testdef(lora_testdef_t *testdef) {
       delay(500);
     }
   }
+  bool valid_results = false;
   if (delivered_testdef) {
-    g_radio_a->recv_testdef_packets(testdef, &recv_packets);
+    valid_results = g_radio_a->recv_testdef_packets(testdef, recv_packets, log_file);
     breakout_set_led(BO_LED_1, true);
   }
-  return recv_packets;
+  return valid_results;
 }
 
 static void send_heartbeats(void) {

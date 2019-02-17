@@ -9,6 +9,8 @@
 #include <RH_RF95.h>
 #include <RHReliableDatagram.h>
 
+#include <SdFat.h>
+
 #define TESTDEF_ID_LEN (10)
 
 #define NO_TIMEOUT (0)
@@ -139,7 +141,7 @@ class LoRaModule {
     bool recv_testdef(lora_testdef_t *recv_testdef);
 
     bool send_testdef_packets(lora_testdef_t *testdef);
-    bool recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_packets = NULL);
+    bool recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_packets, File* log_file);
 
     bool send_heartbeat(void);
     void ack_heartbeat(uint8_t master_id);
@@ -155,7 +157,7 @@ class LoRaModule {
     // Interrupt handling
     void set_interrupt(bool value);
     bool check_interrupt(bool clear = false);
-
+    
     // Low level radio interface
     RH_RF95 _rf95;
     // Addressed reliable interface

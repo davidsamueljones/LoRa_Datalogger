@@ -10,7 +10,7 @@ static const char *TESTDEF_FIELDS[] = {"exp_range", "packet_cnt", "packet_len", 
                                        "bw", "cr4_denom", "preamble_syms", "crc"};
 #define TESTDEF_FIELD_COUNT (uint8_t) (sizeof(TESTDEF_FIELDS) / sizeof(TESTDEF_FIELDS[1]))
 
-static const char *RECV_PACKETS_FIELDS[] = {"id", "rssi", "snr"};            
+static const char *RECV_PACKETS_FIELDS[] = {"id", "rssi", "snr", "failed_recv"};            
 #define RECV_PACKETS_FIELD_COUNT (uint8_t) (sizeof(RECV_PACKETS_FIELDS) / sizeof(RECV_PACKETS_FIELDS[1]))   
 
 SdFatSdio SD;
@@ -77,26 +77,6 @@ bool storage_slave_defaults(void) {
     return false;
   }
   return true;
-}
-
-File storage_init_result_file(char* filename) {
-    char buf[TESTDEF_ID_LEN + 5];
-    sprintf(buf, "%s.csv", filename);
-    Serial.printf("Making results file...\n");
-    File file = SD.open(buf, FILE_WRITE);
-    for (uint8_t field=0; field < RECV_PACKETS_FIELD_COUNT; field++) {
-      file.write(RECV_PACKETS_FIELDS[field]);
-      if ((field + 1) < RECV_PACKETS_FIELD_COUNT) {
-        file.write(",");
-      }
-    }
-    return file;
-}
-
-bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr) {
-  char wr_buf[30];
-  sprintf(wr_buf, "\n%d,%d,%d", id, rssi, snr);
-  return file->write(wr_buf) ? true : false;
 }
 
 bool storage_load_testdef(File* file, lora_testdef_t *testdef) {
@@ -174,6 +154,35 @@ uint8_t storage_load_testdefs(lora_testdef_t testdefs[], uint8_t arr_len) {
   }
   Serial.printf("%d testdefs loaded!\n", n);
   return n;
+}
+
+File storage_init_result_file(char* filename) {
+    char buf[TESTDEF_ID_LEN + 5];
+    sprintf(buf, "%s.csv", filename);
+    Serial.printf("Making results file...\n");
+    File file = SD.open(buf, FILE_WRITE);
+    for (uint8_t field=0; field < RECV_PACKETS_FIELD_COUNT; field++) {
+      file.write(RECV_PACKETS_FIELDS[field]);
+      if ((field + 1) < RECV_PACKETS_FIELD_COUNT) {
+        file.write(",");
+      }
+    }
+    Serial.printf("Initialised test results file!\n");
+    return file;
+}
+
+bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr, uint16_t failed_recv) {
+  char wr_buf[30];
+  sprintf(wr_buf, "\n%d,%d,%d,%d", id, rssi, snr, failed_recv);
+  return file->write(wr_buf) ? true : false;
+}
+
+File storage_init_test_log(void) {
+    Serial.printf("Making test log file...\n");
+    File file = SD.open(LOG_FILE, FILE_WRITE);
+      file.write("Test log created!\n");
+    Serial.printf("Initialised test log file!\n");
+    return file;
 }
 
 bool is_storage_initialised(void) {
