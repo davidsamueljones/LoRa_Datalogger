@@ -10,7 +10,7 @@ static const char *TESTDEF_FIELDS[] = {"exp_range", "packet_cnt", "packet_len", 
                                        "bw", "cr4_denom", "preamble_syms", "crc"};
 #define TESTDEF_FIELD_COUNT (uint8_t) (sizeof(TESTDEF_FIELDS) / sizeof(TESTDEF_FIELDS[1]))
 
-static const char *RECV_PACKETS_FIELDS[] = {"id", "rssi", "snr", "failed_recv"};            
+static const char *RECV_PACKETS_FIELDS[] = {"id", "rssi", "snr", "failed_recv", "time_left"};            
 #define RECV_PACKETS_FIELD_COUNT (uint8_t) (sizeof(RECV_PACKETS_FIELDS) / sizeof(RECV_PACKETS_FIELDS[1]))   
 
 SdFatSdio SD;
@@ -171,9 +171,9 @@ File storage_init_result_file(char* filename) {
     return file;
 }
 
-bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr, uint16_t failed_recv) {
+bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr, uint32_t failed_recv, int32_t time_left) {
   char wr_buf[30];
-  sprintf(wr_buf, "\n%d,%d,%d,%d", id, rssi, snr, failed_recv);
+  sprintf(wr_buf, "\n%d,%d,%d,%ld,%ld", id, rssi, snr, failed_recv, time_left);
   return file->write(wr_buf) ? true : false;
 }
 

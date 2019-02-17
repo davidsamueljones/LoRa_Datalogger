@@ -163,6 +163,8 @@ class LoRaModule {
     // Addressed reliable interface
     RHReliableDatagram _rf95_dg;
   private:
+    uint16_t rx_bad_since_last_check(void);
+
     // The pin configuration of the module 
     lora_module_t _module_cfg;
     // The radio module configuration that is hardcoded and therefore predictable
