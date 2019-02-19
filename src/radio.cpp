@@ -16,14 +16,15 @@
 
 // Airtime will not reflect all time for a single packet, will require extra processing.
 // TODO: Currently captured as a simple multiplier, is something more sophisticated better?
-#define AIRTIME_MULTIPLIER 1.3
+#define AIRTIME_MULTIPLIER (1.3)
+#define RX_PROCESS_TIME_MS (100)
 
 lora_cfg_t hc_base_cfg = {
   .freq = 868.0f,
   .sf = 12,
   .tx_dbm = 14,
   .bw = 125000,
-  .cr4_denom = 5,
+  .cr4_denom = 8,
   .preamble_syms = 8,
   .crc = true,
 };
@@ -315,6 +316,7 @@ bool LoRaModule::send_testdef_packets(lora_testdef_t *testdef) {
     // If any fail to send we'll just ignore it, this shouldn't happen
     unacknowledged_tx(&_tx_buf);
     packet++;
+    delay(RX_PROCESS_TIME_MS);
   }
   // Calculate the sending duration, not worrying about wraps, should be good
   // for 49 days...
@@ -351,7 +353,7 @@ bool LoRaModule::recv_testdef_packets(lora_testdef_t *testdef, uint16_t *recv_pa
 
   // Determine a timeout that should allow all packets to be captured
   uint32_t packet_airtime = calculate_packet_airtime(&testdef->cfg, testdef->packet_len);
-  uint32_t packet_timeout = packet_airtime * AIRTIME_MULTIPLIER;
+  uint32_t packet_timeout = packet_airtime * AIRTIME_MULTIPLIER + RX_PROCESS_TIME_MS;
   uint32_t timeout = packet_timeout * (testdef->packet_cnt+1) + SLAVE_PACKET_SEND_DELAY;
   SERIAL_AND_LOG((*log_file), "Waiting for packets for %dms...\n", timeout);
 
