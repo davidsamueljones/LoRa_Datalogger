@@ -171,7 +171,8 @@ File storage_init_result_file(char* filename) {
     return file;
 }
 
-bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr, uint32_t failed_recv, int32_t time_left) {
+bool storage_write_result(File *file, uint16_t id, int16_t rssi, int16_t snr, 
+                                        uint32_t failed_recv, int32_t time_left) {
   char wr_buf[30];
   sprintf(wr_buf, "\n%d,%d,%d,%ld,%ld", id, rssi, snr, failed_recv, time_left);
   return file->write(wr_buf) ? true : false;

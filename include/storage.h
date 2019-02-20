@@ -31,7 +31,8 @@ bool storage_load_testdef(char* path, lora_testdef_t *testdef);
 uint8_t storage_load_testdefs(lora_testdef_t testdefs[], uint8_t arr_len);
 
 File storage_init_result_file(char* filename);
-bool storage_write_result(File *file, uint8_t id, int16_t rssi, int16_t snr, uint32_t failed_recv, int32_t time_left);
+bool storage_write_result(File *file, uint16_t id, int16_t rssi, 
+                    int16_t snr, uint32_t failed_recv, int32_t time_left);
 
 File storage_init_test_log(void);
 
