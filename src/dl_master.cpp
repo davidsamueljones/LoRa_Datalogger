@@ -76,7 +76,7 @@ static void run_testdefs(void) {
   // Start running all testdefs in reverse order of expected range
   // If no packets are received at a certain level do not carry out the further testdefs
   lora_testdef_t *last_testdef = NULL;
-  uint16_t last_recv_packets = UINT16_MAX;
+  uint16_t packets_at_level = 0;
   Serial.printf("Executing testdefs...\n");
   while (!dl_common_check_interrupts()) {
     bool all_completed = true;
@@ -93,14 +93,19 @@ static void run_testdefs(void) {
     }
 
     if (all_completed) {
-      SERIAL_AND_LOG(log_file, "All testdefs excuted!\n")
+      SERIAL_AND_LOG(log_file, "\nAll testdefs excuted!\n")
       break;
     }
-    if (last_testdef != NULL && last_recv_packets == 0 
-              && max_exp_range < last_testdef->exp_range) {
-      SERIAL_AND_LOG(log_file, "Giving up, got no packets from testdef with highest expected range!\n")
-      break;
+    if (last_testdef != NULL && max_exp_range < last_testdef->exp_range) {
+      // Exit early as there is no point in carrying on
+      if (packets_at_level == 0) {
+        SERIAL_AND_LOG(log_file, "\nGiving up, got no packets from testdef with highest expected range!\n")
+        break;
+      }      
+      // At a new level, reset the number of packets found
+      packets_at_level = 0;
     }
+
     // Clear any status LEDs
     breakout_set_led(BO_LED_1, false);
     breakout_set_led(BO_LED_2, false);
@@ -111,7 +116,9 @@ static void run_testdefs(void) {
     SERIAL_AND_LOG(log_file, "Start Time: " DATETIME_PRINT_FORMAT "\n", DATETIME_PRINT_ARGS);
     log_file.flush();
     g_radio_a->dbg_print_testdef(testdef);
-    bool valid_results = run_testdef(testdef, &last_recv_packets, &log_file);  
+    uint16_t recv_packets = 0;
+    bool valid_results = run_testdef(testdef, &recv_packets, &log_file);  
+    packets_at_level += recv_packets;
     completed[selected] = valid_results;
     last_testdef = testdef;
     SERIAL_AND_LOG(log_file, "Testdef results: %s\n", valid_results ? "Valid" : "Invalid");
@@ -144,7 +151,7 @@ static bool run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* l
     delivered_testdef = g_radio_a->send_testdef(testdef);
     breakout_set_led(delivered_testdef ? BO_LED_2 : BO_LED_1, true);
     if (!delivered_testdef) {
-      delay(500);
+      delay(500); 
     }
   }
   bool valid_results = false;
