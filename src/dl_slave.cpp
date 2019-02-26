@@ -8,6 +8,7 @@
 #include "storage.h"
 
 static void recv_and_execute_cmd(void);
+static bool handle_testdef_cmd(uint8_t master_id);
 
 void setup() {
   bool boot_success= dl_common_boot(dl_common_set_interrupts); 
@@ -42,15 +43,7 @@ static void recv_and_execute_cmd(void) {
   switch (recv_cmd) {
     case cmd_testdef: 
     {
-      // Handshake to pass over testdef
-      lora_testdef_t testdef;
-      testdef.master_id = master_id;
-      bool recv_testdef = g_radio_a->recv_testdef(&testdef);
-      if (!recv_testdef || dl_common_check_interrupts()) {
-        return;
-      }
-      // Send packets based on testdef
-      g_radio_a->send_testdef_packets(&testdef);
+      handle_testdef_cmd(master_id);
       break;
     }
     case cmd_heartbeat:
@@ -61,6 +54,24 @@ static void recv_and_execute_cmd(void) {
     default:
       break;
   }
+}
+
+static bool handle_testdef_cmd(uint8_t master_id) {
+    // Handshake to pass over testdef
+    lora_testdef_t testdef;
+    testdef.master_id = master_id;
+    bool recv_testdef = g_radio_a->recv_testdef(&testdef);
+    if (!recv_testdef || dl_common_check_interrupts()) {
+      breakout_set_led(BO_LED_3, true);
+      delay(500);
+      breakout_set_led(BO_LED_3, false);
+      return false;
+    }
+    // Send packets based on testdef
+    breakout_set_led(BO_LED_2, true);
+    g_radio_a->send_testdef_packets(&testdef);
+    breakout_set_led(BO_LED_2, false);
+    return true;
 }
 
 #endif
