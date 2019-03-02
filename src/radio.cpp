@@ -20,7 +20,7 @@
 #define RX_PROCESS_TIME_MS (100)
 
 lora_cfg_t hc_base_cfg = {
-  .freq = 868.0f,
+  .freq = 869.525f,
   .sf = 12,
   .tx_dbm = 14,
   .bw = 125000,
