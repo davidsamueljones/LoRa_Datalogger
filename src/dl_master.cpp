@@ -116,6 +116,7 @@ static void run_testdefs(void) {
     SERIAL_AND_LOG(log_file, "Start Time: " DATETIME_PRINT_FORMAT "\n", DATETIME_PRINT_ARGS);
     log_file.flush();
     g_radio_a->dbg_print_testdef(testdef);
+    Serial.printf("\n");
     uint16_t recv_packets = 0;
     bool valid_results = run_testdef(testdef, &recv_packets, &log_file);  
     packets_at_level += recv_packets;

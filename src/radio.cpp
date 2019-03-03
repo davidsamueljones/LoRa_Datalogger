@@ -66,6 +66,7 @@ void LoRaModule::reset_to_base_cfg(void) {
 
 void LoRaModule::set_cfg(lora_cfg_t *new_cfg) {
   Serial.printf("Setting new configuration...\n");
+  _rf95.setModeIdle();
   _rf95.setFrequency(new_cfg->freq);
   _rf95.setSpreadingFactor(new_cfg->sf);
   _rf95.setTxPower(new_cfg->tx_dbm);
@@ -273,6 +274,7 @@ bool LoRaModule::recv_testdef(lora_testdef_t *rx_testdef) {
   memcpy(rx_testdef, &_rx_buf.data[MSG_PAYLOAD_START], sizeof(lora_testdef_t));
   Serial.printf("Testdef received successfully!\n");
   dbg_print_testdef((lora_testdef_t*) &_rx_buf.data[MSG_PAYLOAD_START]);
+  Serial.printf("\n");
   return true;
 }
 
@@ -479,7 +481,7 @@ void LoRaModule::dbg_print_cfg(lora_cfg_t *cfg, bool title) {
   if (title) {
     Serial.printf("Radio Configuration:\n");
   }
-  Serial.printf("* Frequency (MHz): %.0f\n", cfg->freq);
+  Serial.printf("* Frequency (MHz): %.03f\n", cfg->freq);
   Serial.printf("* Spreading Factor: %d\n", cfg->sf);
   Serial.printf("* Power (dBm): %d\n", cfg->tx_dbm);
   Serial.printf("* Bandwidth (Hz): %d\n", cfg->bw);
