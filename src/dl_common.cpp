@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <TimeLib.h>
+#include <EEPROM.h>
 
 #include "dl_common.h"
 #include "breakout.h"
@@ -7,6 +8,7 @@
 #include "storage.h"
 
 static volatile bool _interrupted = false;
+static uint8_t board_id = INVALID_BOARD_ID;
 
 bool dl_common_boot(void switch_isr(void)) {
   // Initialise breakout board
@@ -30,12 +32,31 @@ bool dl_common_boot(void switch_isr(void)) {
   Serial.printf("Current [Date] Time: ");
   Serial.printf(DATETIME_PRINT_FORMAT "\n", DATETIME_PRINT_ARGS);
 
+  // Get the Board ID from the EEPROM
+  Serial.printf("Getting Board ID from EEPROM...\n");
+  uint8_t identifier_byte_1 = EEPROM.read(IDX_IDENTIFIER_BYTE_1);
+  uint8_t identifier_byte_2 = EEPROM.read(IDX_IDENTIFIER_BYTE_2);
+  bool board_id_set = identifier_byte_1 == IDENTIFIER_BYTE_1 &&
+                      identifier_byte_2 == IDENTIFIER_BYTE_2;
+  if (board_id_set) {
+    Serial.printf("Board ID Found!\n");
+    uint8_t board_id = EEPROM.read(IDX_BOARD_ID);
+    Serial.printf("* ID: 0x%02X\n", board_id);
+    Serial.printf("* Valid: %s\n", IS_VALID_BOARD_ID(board_id) ? "True" : "False");
+    if (!IS_VALID_BOARD_ID(board_id)) {
+      return false;
+    }
+    Serial.printf("* Type: %s\n", GET_BOARD_STR_ID(board_id));
+  } else {
+    Serial.printf("Board ID not Found!\n");
+    return false;
+  }
+
   // Initialise radio, keep track using global instance
-  lora_module_t lora_module = {BOARD_ID, RFM95_CS, RFM95_RST, RFM95_INT};
+  lora_module_t lora_module = {board_id, RFM95_CS, RFM95_RST, RFM95_INT};
   g_radio_a = new LoRaModule(&lora_module, &hc_base_cfg);
   bool radio_init_sucess = g_radio_a->radio_init();
   Serial.printf("Radio initialisation %s!\n", radio_init_sucess ? "successful" : "failed");
-  Serial.printf("* Radio ID: 0x%02X\n", lora_module.radio_id);
   if (!radio_init_sucess) {
     return false;
   }
@@ -60,9 +81,9 @@ bool dl_common_boot(void switch_isr(void)) {
 }
 
 void dl_common_finish_boot(bool boot_success) {
-  breakout_set_led(BOARD_TYPE_LED, true);
+  breakout_set_led(GET_BOARD_LED(board_id), true);
   if (!boot_success) {
-    Serial.printf("Boot as %s failed!\n", BOARD_TYPE); 
+    Serial.printf("Boot as %s failed!\n", GET_BOARD_STR_ID(board_id)); 
     Serial.printf("Check errors and reset device!\n"); 
     
     bool failure_led_on = false;
@@ -72,8 +93,12 @@ void dl_common_finish_boot(bool boot_success) {
       delay(1000);
     }
   } else {
-    Serial.printf("Booted as %s successfully!\n", BOARD_TYPE); 
+    Serial.printf("Booted as %s successfully!\n", GET_BOARD_STR_ID(board_id)); 
   }           
+}
+
+uint8_t dl_common_get_board_id(void) {
+  return board_id;
 }
 
 void dl_common_set_interrupts(void) {
@@ -92,4 +117,3 @@ bool dl_common_check_interrupts(bool clear) {
   }
   return temp;
 }
-
