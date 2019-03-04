@@ -1,15 +1,32 @@
-/*
-  Top level container for including correct target main.
-  @author David Jones (dsj1n15)
-*/
-#if defined(DL_MASTER) && defined(DL_SLAVE)
-#error Cannot compile as both DL_MASTER and DL_SLAVE
-#endif
+#include <Arduino.h>
 
-// Include appropriate 
-#ifdef DL_MASTER
+#include "dl_common.h"
 #include "dl_master.h"
-#endif
-#ifdef DL_SLAVE
 #include "dl_slave.h"
-#endif
+
+void setup() {
+  // Do general boot procedure for all boards (includes finding out board type)
+  bool boot_success = dl_common_boot(dl_common_set_interrupts);
+  // Do board specific boot sequence
+  if (boot_success) {
+    uint8_t board_id = dl_common_get_board_id();
+    if (IS_MASTER_BOARD(board_id)) {
+      boot_success &= dl_master_setup();
+    }
+    if (IS_SLAVE_BOARD(board_id)) {
+      boot_success &= dl_slave_setup();
+    }
+  }
+  // Report whether boot has successed, will block if boot_success is false
+  dl_common_finish_boot(boot_success);                           
+}
+
+void loop() {
+  uint8_t board_id = dl_common_get_board_id();
+  if (IS_MASTER_BOARD(board_id)) {
+    dl_master_loop();
+  }
+  if (IS_SLAVE_BOARD(board_id)) {
+    dl_slave_loop();
+  }
+}

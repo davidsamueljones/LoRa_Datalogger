@@ -10,7 +10,7 @@
 #define SLAVE_ID_FLAG          (0x40)
 #define SLAVE_ID_BIT           (6)
 // Mask to capture actual id part
-#define BOARD_ID_MASK          (0x6F)
+#define BOARD_ID_MASK          (0x3F)
 // Macro to check if board is master
 #define IS_MASTER_BOARD(ID)    (ID & MASTER_ID_FLAG)
 // Macro to check if board is master
@@ -50,7 +50,7 @@
 #define IDENTIFIER_BYTE_2 0x1F
 
 // A board identifier that is known to be invalid
-#define INVALID_BOARD_ID (0xFF)
+#define INVALID_BOARD_ID (BOARD_ID_MASK)
 #if IS_VALID_BOARD_ID(INVALID_BOARD_ID)
 #error "Invalid Board ID is defined as valid!"
 #endif

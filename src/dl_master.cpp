@@ -1,31 +1,26 @@
-#ifdef DL_MASTER
-
 #include <Arduino.h>
 #include <TimeLib.h>
 
 #include "dl_common.h"
+#include "dl_master.h"
 #include "breakout.h"
 #include "radio.h"
 #include "storage.h"
 
-static void run_testdefs(void);
-static bool run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* log_file);
-static void send_heartbeats(void);
-
 #define MAX_TESTDEFS (100)
 
-void setup() {
-  bool boot_success = dl_common_boot(dl_common_set_interrupts);
+bool dl_master_setup(void) {
+  Serial.printf("Running %s setup...\n", MASTER_BOARD_STR_ID);
   // Prepare the SD card for master logging, failure isn't critical
   storage_master_defaults();
-  // Report whether boot has successed, will block if boot_success is false
-  dl_common_finish_boot(boot_success);                           
+  Serial.printf("Finished %s setup!\n", MASTER_BOARD_STR_ID);
+  return true;                       
 }
 
-void loop() {
+bool dl_master_loop(void) {
   switch (breakout_get_switch_state()) {
     case sw_state_top:
-      run_testdefs();
+      dl_master_run_testdefs();
       break;
     case sw_state_mid:
       breakout_set_led(BO_LED_1, false);
@@ -33,16 +28,16 @@ void loop() {
       delay(100); // do nothing
       break;
     case sw_state_bot:
-      send_heartbeats();
+      dl_master_send_heartbeats();
       break;
     default:
       delay(100); // do nothing
       break;
   }
+  return true;
 }
 
-// If the SD card is available, run all test definitions in the testdef folder.
-static void run_testdefs(void) {
+void dl_master_run_testdefs(void) {
   // Clear all interrupts
   dl_common_set_interrupts(false);
   
@@ -118,7 +113,7 @@ static void run_testdefs(void) {
     g_radio_a->dbg_print_testdef(testdef);
     Serial.printf("\n");
     uint16_t recv_packets = 0;
-    bool valid_results = run_testdef(testdef, &recv_packets, &log_file);  
+    bool valid_results = dl_master_run_testdef(testdef, &recv_packets, &log_file);  
     packets_at_level += recv_packets;
     completed[selected] = valid_results;
     last_testdef = testdef;
@@ -139,7 +134,7 @@ static void run_testdefs(void) {
   while (breakout_get_switch_state() != sw_state_mid) {}
 }
 
-static bool run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* log_file) {
+bool dl_master_run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* log_file) {
   // Clear all interrupts
   dl_common_set_interrupts(false);
   // Reset to agreed base 
@@ -163,7 +158,7 @@ static bool run_testdef(lora_testdef_t *testdef, uint16_t* recv_packets, File* l
   return valid_results;
 }
 
-static void send_heartbeats(void) {
+void dl_master_send_heartbeats(void) {
   // Clear all interrupts
   dl_common_set_interrupts(false);
   // Reset to agreed base 
@@ -171,7 +166,7 @@ static void send_heartbeats(void) {
   // Start sending some acknowledged packets indefinitely
   while (!dl_common_check_interrupts()) {
     bool heartbeat_success = g_radio_a->send_heartbeat();
-    Serial.printf("Got Heartbeat ACK: %d\n", heartbeat_success);
+    Serial.printf("Got Heartbeat ACK: %s\n", heartbeat_success ? "True" : "False");
     breakout_set_led(heartbeat_success ? BO_LED_2 : BO_LED_1, true);
     delay(500);
     breakout_set_led(heartbeat_success ? BO_LED_2 : BO_LED_1, false);
@@ -179,5 +174,3 @@ static void send_heartbeats(void) {
   // Just a safety check to ensure switch doesn't skip mid
   while (breakout_get_switch_state() != sw_state_mid) {}
 }
-
-#endif

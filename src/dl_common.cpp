@@ -40,7 +40,7 @@ bool dl_common_boot(void switch_isr(void)) {
                       identifier_byte_2 == IDENTIFIER_BYTE_2;
   if (board_id_set) {
     Serial.printf("Board ID Found!\n");
-    uint8_t board_id = EEPROM.read(IDX_BOARD_ID);
+    board_id = EEPROM.read(IDX_BOARD_ID);
     Serial.printf("* ID: 0x%02X\n", board_id);
     Serial.printf("* Valid: %s\n", IS_VALID_BOARD_ID(board_id) ? "True" : "False");
     if (!IS_VALID_BOARD_ID(board_id)) {
